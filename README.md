@@ -13,6 +13,7 @@ Wraps ffmpeg to transcode streams with hardware acceleration. On first run, prob
 - HEVC Main10/P010 preservation when supported
 - 10-bit input conversion for H264 output
 - Passthrough for 4K, HDR, and unsupported formats
+- AAC audio passthrough with predictable AAC conversion for non-AAC sources
 
 ## Usage
 
@@ -73,10 +74,17 @@ QSV is initialized with the selected render node as its oneVPL child device. VAA
 ## Encoding settings
 
 - **Video bitrate**: Scales quadratically with resolution (8 Mbps base at 1080p, 2 Mbps floor)
-- **Audio bitrate**: Source bitrate when valid; otherwise 64 kbps per channel
+- **AAC input**: Stream-copied unchanged
+- **Non-AAC mono**: AAC 96 kbps
+- **Non-AAC stereo**: AAC 192 kbps
+- **Non-AAC 5.1**: AAC 384 kbps
+- **Non-AAC 7.1**: AAC 512 kbps
+- **Unknown audio layout**: Downmixed to AAC stereo at 192 kbps
 - **Audio-less inputs**: Audio encoder/filter options are omitted entirely
 - **B-frames**: Enabled (2) for better compression unless low-power mode requires otherwise
 - **GOP**: 1 second (matches source framerate)
+
+Non-AAC audio transcodes use `aresample=async=1` to help maintain A/V sync. AAC passthrough is not filtered or re-encoded.
 
 ## Passthrough
 
@@ -124,7 +132,7 @@ probe-sample.mkv      # Jellyfin 10-bit HEVC demo clip
 Example cache from an Intel system with only `/dev/dri/renderD129` exposed:
 
 ```bash
-HW_FINGERPRINT='script=render-node-v5;dri:renderD129:0x8086:0x56a6;selected:dri=/dev/dri/renderD129,vaapi=/dev/dri/renderD129,qsv=/dev/dri/renderD129;'
+HW_FINGERPRINT='script=render-node-v6;dri:renderD129:0x8086:0x56a6;selected:dri=/dev/dri/renderD129,vaapi=/dev/dri/renderD129,qsv=/dev/dri/renderD129;'
 BEST_ACCEL='qsv'
 BEST_CODEC='hevc'
 BEST_LOW_POWER='0'
