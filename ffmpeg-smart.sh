@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v1"
+VERSION="render-node-v2"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -98,13 +98,26 @@ ensure_probe_sample() {
     }
 }
 
+parse_bench_speed() {
+    local output="$1"
+    grep -oP 'speed=\s*\K[0-9.]+(?=x)' <<<"$output" | tail -1 || true
+}
+
+log_bench_failure() {
+    local label="$1"
+    local output="$2"
+    echo "$LOG_PREFIX WARNING: $label benchmark produced no speed result" >&2
+    tail -n 8 <<<"$output" | sed "s/^/$LOG_PREFIX   /" >&2
+}
+
 # Quick encoder benchmark - returns "speed:lp_speed" (e.g., "4.0:3.5" or "5.2:" if no lp)
-# Tests both normal and low_power modes for VAAPI/QSV
+# Tests both normal and low_power modes for VAAPI/QSV.
+# Use an explicit output duration so lavfi EOF behavior cannot stall the probe.
 bench_encoder() {
     local encoder="$1"
     local pix_fmt="nv12"
     local size="1920x1080"
-    local duration="2"  # 2 seconds @ 30fps = 60 frames
+    local duration="2"
     local output speed
     local lp_speed=""
 
@@ -116,65 +129,77 @@ bench_encoder() {
     case "$encoder" in
         *_qsv)
             [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || { echo "0:"; return; }
-            # Test normal mode with production settings
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
                 -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                 -filter_hw_device qsv \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
-                -vf "hwupload=extra_hw_frames=16" \
-                -c:v "$encoder" -preset faster $prod_opts -f null - 2>&1)
-            speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
-            # Test low power mode (no preset, no B-frames)
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -vf "format=$pix_fmt,hwupload=extra_hw_frames=16" \
+                -c:v "$encoder" -preset faster $prod_opts -f null - 2>&1 || true)
+            speed=$(parse_bench_speed "$output")
+            [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
+
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
                 -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                 -filter_hw_device qsv \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
-                -vf "hwupload=extra_hw_frames=16" \
-                -c:v "$encoder" -low_power true $lp_prod_opts -f null - 2>&1)
-            lp_speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -vf "format=$pix_fmt,hwupload=extra_hw_frames=16" \
+                -c:v "$encoder" -low_power true $lp_prod_opts -f null - 2>&1 || true)
+            lp_speed=$(parse_bench_speed "$output")
             ;;
         *_vaapi)
             [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || { echo "0:"; return; }
-            # Test normal mode with production settings
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
                 -vaapi_device "$VAAPI_DEVICE" \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
-                -vf "hwupload,scale_vaapi=format=$pix_fmt" \
-                -c:v "$encoder" -rc_mode VBR $prod_opts -f null - 2>&1)
-            speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
-            # Test low power mode (no B-frames)
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -vf "format=$pix_fmt,hwupload,scale_vaapi=format=$pix_fmt" \
+                -c:v "$encoder" -rc_mode VBR $prod_opts -f null - 2>&1 || true)
+            speed=$(parse_bench_speed "$output")
+            [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
+
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
                 -vaapi_device "$VAAPI_DEVICE" \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
-                -vf "hwupload,scale_vaapi=format=$pix_fmt" \
-                -c:v "$encoder" -rc_mode VBR -low_power 1 $lp_prod_opts -f null - 2>&1)
-            lp_speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -vf "format=$pix_fmt,hwupload,scale_vaapi=format=$pix_fmt" \
+                -c:v "$encoder" -rc_mode VBR -low_power 1 $lp_prod_opts -f null - 2>&1 || true)
+            lp_speed=$(parse_bench_speed "$output")
             ;;
         *_nvenc)
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
                 -init_hw_device cuda=cuda -filter_hw_device cuda \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt,hwupload_cuda" \
-                -c:v "$encoder" -f null - 2>&1)
-            speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -vf "format=$pix_fmt,hwupload_cuda" \
+                -c:v "$encoder" -f null - 2>&1 || true)
+            speed=$(parse_bench_speed "$output")
+            [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
             ;;
         *_videotoolbox)
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
-                -c:v "$encoder" -f null - 2>&1)
-            speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -c:v "$encoder" -f null - 2>&1 || true)
+            speed=$(parse_bench_speed "$output")
+            [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
             ;;
         *_v4l2m2m)
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
-                -c:v "$encoder" -f null - 2>&1)
-            speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -c:v "$encoder" -f null - 2>&1 || true)
+            speed=$(parse_bench_speed "$output")
+            [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
             ;;
         *)
-            # Software encoders - use faster preset for quick test
-            output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30" \
-                -c:v "$encoder" -preset ultrafast -f null - 2>&1)
-            speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
+            output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                -f lavfi -i "testsrc2=size=$size:rate=30" \
+                -t "$duration" \
+                -c:v "$encoder" -preset ultrafast -f null - 2>&1 || true)
+            speed=$(parse_bench_speed "$output")
+            [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
             ;;
     esac
 
@@ -192,40 +217,46 @@ test_encoder() {
     case "$encoder" in
         *_qsv)
             [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || return 1
-            timeout 10s ffmpeg -hide_banner -v error \
+            timeout 10s ffmpeg -nostdin -hide_banner -v error \
                 -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                 -filter_hw_device qsv \
-                -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt" \
+                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
+                -t 0.2 \
                 -vf "hwupload=extra_hw_frames=16" \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
         *_vaapi)
             [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || return 1
-            timeout 10s ffmpeg -hide_banner -v error \
+            timeout 10s ffmpeg -nostdin -hide_banner -v error \
                 -vaapi_device "$VAAPI_DEVICE" \
-                -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt" \
+                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
+                -t 0.2 \
                 -vf "hwupload,scale_vaapi=format=$pix_fmt" \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
         *_nvenc)
-            timeout 10s ffmpeg -hide_banner -v error \
+            timeout 10s ffmpeg -nostdin -hide_banner -v error \
                 -init_hw_device cuda=cuda -filter_hw_device cuda \
-                -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt,hwupload_cuda" \
+                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt,hwupload_cuda" \
+                -t 0.2 \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
         *_videotoolbox)
-            timeout 10s ffmpeg -hide_banner -v error \
-                -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt" \
+            timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
+                -t 0.2 \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
         *_v4l2m2m)
-            timeout 10s ffmpeg -hide_banner -v error \
-                -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt" \
+            timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
+                -t 0.2 \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
         *)
-            timeout 10s ffmpeg -hide_banner -v error \
-                -f lavfi -i "color=black:size=$size:duration=0.1" \
+            timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                -f lavfi -i "color=black:size=$size:rate=30" \
+                -t 0.2 \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
     esac
@@ -258,8 +289,8 @@ test_10bit_decode() {
         *) return 1 ;;  # software doesn't need this test
     esac
 
-    timeout 5s ffmpeg -hide_banner -v error \
-        "${hwaccel_args[@]}" -t 0.2 -i "$PROBE_SAMPLE" \
+    timeout 5s ffmpeg -nostdin -hide_banner -v error \
+        "${hwaccel_args[@]}" -i "$PROBE_SAMPLE" -t 0.2 \
         -f null - 2>/dev/null
 }
 
@@ -329,6 +360,8 @@ probe_capabilities() {
 
             # Skip if encoder not compiled in
             grep -qw "$encoder" <<<"$encoders_list" || continue
+
+            echo "$LOG_PREFIX Probing $encoder..." >&2
 
             local bench_result speed lp_speed best_of_two use_lp
             bench_result=$(bench_encoder "$encoder")
