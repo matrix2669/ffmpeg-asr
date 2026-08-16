@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v7"
+VERSION="render-node-v8"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -607,38 +607,24 @@ if [[ -z "$VCODEC" || "$VCODEC" == "null" ]]; then
     exit 1
 fi
 
+SOURCE_10BIT=false
+[[ "$PIX_FMT" == *"10"* ]] && SOURCE_10BIT=true
 IS_HDR=false
 [[ "$COLOR_TRANSFER" == "smpte2084" || "$COLOR_TRANSFER" == "arib-std-b67" ]] && IS_HDR=true
 
-# Normalizer-first video policy. Common IPTV video is stream-copied so the
-# wrapper only remuxes/repairs timestamps instead of needlessly re-encoding.
-# - 4K+ is always copied.
-# - H264 8-bit 4:2:0 SDR, HEVC 8/10-bit 4:2:0, and MPEG-2 4:2:0 are copied by default.
-# - Supplying -vc explicitly forces a codec transcode below 4K.
-# - Unusual codecs/formats are transcoded through the fastest cached path.
+# Normalizer-first policy: stream-copy video only when the source already
+# satisfies the resolved output policy. The policy comes from explicit flags
+# when supplied, otherwise from the selected cached hardware capabilities.
 VIDEO_COPY_REASON=""
-if [[ "$WIDTH" -ge 3840 || "$HEIGHT" -ge 2160 ]]; then
-    VIDEO_COPY_REASON="4K+"
-elif [[ "$VCODEC_FORCED" == "false" ]]; then
-    case "$VCODEC:$PIX_FMT" in
-        h264:yuv420p|h264:yuvj420p)
-            [[ "$IS_HDR" == "false" ]] && VIDEO_COPY_REASON="compatible h264"
-            ;;
-        hevc:yuv420p|hevc:yuv420p10le)
-            VIDEO_COPY_REASON="compatible hevc"
-            ;;
-        mpeg2video:yuv420p)
-            VIDEO_COPY_REASON="compatible mpeg2video"
-            ;;
-    esac
-fi
-
-# If a non-standard source would require a conversion the selected path cannot
-# preserve safely, prefer stream copy over destructive conversion.
-if [[ -z "$VIDEO_COPY_REASON" && "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "false" ]]; then
-    VIDEO_COPY_REASON="10-bit unsupported encode"
-elif [[ -z "$VIDEO_COPY_REASON" && "$IS_HDR" == "true" && ( "$VCODEC_OUT" != "hevc" || "$ALLOW_HDR" == "false" ) ]]; then
-    VIDEO_COPY_REASON="HDR unsupported encode"
+VIDEO_TRANSCODE_REASON=""
+if [[ "$VCODEC" != "$VCODEC_OUT" ]]; then
+    VIDEO_TRANSCODE_REASON="codec ${VCODEC}->${VCODEC_OUT}"
+elif [[ "$SOURCE_10BIT" == "true" && "$ALLOW_10BIT" != "true" ]]; then
+    VIDEO_TRANSCODE_REASON="10-bit not allowed"
+elif [[ "$IS_HDR" == "true" && "$ALLOW_HDR" != "true" ]]; then
+    VIDEO_TRANSCODE_REASON="HDR not allowed"
+else
+    VIDEO_COPY_REASON="matches policy codec=${VCODEC_OUT} 10bit=${ALLOW_10BIT} hdr=${ALLOW_HDR}"
 fi
 
 # Audio policy:
@@ -710,7 +696,7 @@ if [[ -n "$VIDEO_COPY_REASON" ]]; then
         pipe:1
 fi
 
-# Everything below this point is the fallback transcode path.
+# Everything below this point is the policy-mismatch transcode path.
 case "$ACCEL" in
     qsv)
         if [[ -z "$QSV_DEVICE" || ! -e "$QSV_DEVICE" ]]; then
@@ -793,14 +779,23 @@ set_encoder_opts
 
 VF_ARGS=""
 PROFILE_ARGS=""
-if [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "h264" ]]; then
+if [[ "$SOURCE_10BIT" == "true" && "$ALLOW_10BIT" != "true" ]]; then
+    # Policy requires an 8-bit output from a 10-bit source.
     case "$ACCEL" in
         nvenc) VF_ARGS="-vf scale_cuda=format=nv12" ;;
         vaapi) VF_ARGS="-vf scale_vaapi=format=nv12" ;;
         qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
         *) VF_ARGS="-pix_fmt yuv420p" ;;
     esac
-elif [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "true" ]]; then
+elif [[ "$SOURCE_10BIT" == "true" && "$VCODEC_OUT" == "h264" ]]; then
+    # This script's H264 output path is 8-bit.
+    case "$ACCEL" in
+        nvenc) VF_ARGS="-vf scale_cuda=format=nv12" ;;
+        vaapi) VF_ARGS="-vf scale_vaapi=format=nv12" ;;
+        qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
+        *) VF_ARGS="-pix_fmt yuv420p" ;;
+    esac
+elif [[ "$SOURCE_10BIT" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "true" ]]; then
     case "$ACCEL" in
         vaapi) VF_ARGS="-vf scale_vaapi=format=p010le" ;;
         qsv)
@@ -851,7 +846,7 @@ case "$ACCEL" in
     vaapi) DEVICE_INFO=" device=$VAAPI_DEVICE" ;;
 esac
 
-echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${AUDIO_INFO} accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT}" >&2
+echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER reason=${VIDEO_TRANSCODE_REASON} GOP=$GOP${GOP_WARN} audio=${AUDIO_INFO} accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT} hdr=${ALLOW_HDR}" >&2
 
 exec ffmpeg \
     "${UA_ARGS[@]}" \
