@@ -1,13 +1,17 @@
 # ffmpeg-asr
 
-Adaptive stream re-encoder with automatic hardware acceleration detection.
+Adaptive stream re-encoder with automatic hardware acceleration detection and real-media capability benchmarking.
 
 ## What it does
 
-Wraps ffmpeg to transcode streams with hardware acceleration. On first run, probes your hardware to find working encoders and caches the optimal settings. Automatically handles:
+Wraps ffmpeg to transcode streams with hardware acceleration. On first run, probes the hardware paths actually exposed to the process/container, benchmarks working encoder pipelines against a real compressed media sample, and caches the fastest result. Automatically handles:
 
-- Hardware encoder selection (NVENC, VAAPI, QSV, VideoToolbox)
-- 10-bit input conversion for H264 encoders
+- Hardware encoder selection (NVENC, VAAPI, QSV, VideoToolbox, V4L2 M2M, software)
+- Linux DRI render-node discovery from `/dev/dri/renderD*`
+- Independent QSV and VAAPI device overrides
+- Per-accelerator 10-bit decode/encode capability tracking
+- HEVC Main10/P010 preservation when supported
+- 10-bit input conversion for H264 output
 - Passthrough for 4K, HDR, and unsupported formats
 
 ## Usage
@@ -25,18 +29,18 @@ Outputs MPEG-TS to stdout.
 | `-i` | (required) | Input URL or file |
 | `-user_agent` | | User agent for HTTP streams |
 | `-accel` | auto | Hardware acceleration: `qsv`, `vaapi`, `nvenc`, `videotoolbox`, `v4l2m2m`, `software` |
-| `-vc` | auto | Output codec: `h264` (faster) or `hevc` (smaller files) |
-| `-10bit` | auto | Enable 10-bit encoding (for capable hardware) |
-| `-hdr` | auto | Enable HDR re-encoding (requires 10-bit HEVC) |
+| `-vc` | auto | Output codec: `h264` or `hevc`; auto uses the fastest successfully benchmarked path |
+| `-10bit` | auto | Enable 10-bit encoding when the selected accelerator supports it |
+| `-hdr` | auto | Enable HDR re-encoding when the selected accelerator supports 10-bit HEVC |
 | `--recache` | | Force re-probe encoder capabilities |
 
 ### Examples
 
 ```bash
-# Basic usage (auto-detect accel, H264 output)
+# Basic usage (auto-detect acceleration and output codec)
 ./ffmpeg-smart.sh -i "http://stream.url/live.m3u8" -user_agent "Mozilla/5.0"
 
-# Force HEVC output (smaller files, slower)
+# Force HEVC output
 ./ffmpeg-smart.sh -i "stream_url" -user_agent "UA" -vc hevc
 
 # Enable 10-bit encoding on capable hardware
@@ -46,95 +50,133 @@ Outputs MPEG-TS to stdout.
 ./ffmpeg-smart.sh -i "stream_url" -user_agent "UA" -accel vaapi
 ```
 
+## Linux DRI device selection
+
+On Linux, the scripts enumerate render nodes that actually exist under `/dev/dri/renderD*`. This matters in containers/LXCs where host sysfs may contain devices that are not mapped into the container.
+
+By default, the first exposed Intel/AMD render node is selected. You can override device selection with environment variables:
+
+```bash
+# Use one render node for both VAAPI and QSV
+DRI_DEVICE=/dev/dri/renderD129 ./ffmpeg-smart.sh -i "stream_url"
+
+# Override independently
+QSV_DEVICE=/dev/dri/renderD129 \
+VAAPI_DEVICE=/dev/dri/renderD130 \
+./ffmpeg-smart.sh -i "stream_url"
+```
+
+`DRI_DEVICE` is the shared default. `QSV_DEVICE` and `VAAPI_DEVICE` take precedence when set explicitly.
+
+QSV is initialized with the selected render node as its oneVPL child device. VAAPI is passed the selected render node directly.
+
 ## Encoding settings
 
 - **Video bitrate**: Scales quadratically with resolution (8 Mbps base at 1080p, 2 Mbps floor)
-- **Audio bitrate**: 64 kbps per channel (128k stereo, 384k 5.1, 512k 7.1)
-- **B-frames**: Enabled (2) for better compression
+- **Audio bitrate**: Source bitrate when valid; otherwise 64 kbps per channel
+- **Audio-less inputs**: Audio encoder/filter options are omitted entirely
+- **B-frames**: Enabled (2) for better compression unless low-power mode requires otherwise
 - **GOP**: 1 second (matches source framerate)
 
 ## Passthrough
 
 Video is passed through (not re-encoded) when:
 - Resolution is 4K or higher
-- 10-bit content when hardware can't encode 10-bit
-- HDR content when hardware can't encode HDR (requires 10-bit HEVC)
+- 10-bit content requires a 10-bit encode path that the selected accelerator cannot provide
+- HDR content cannot be preserved by the selected HEVC/10-bit path
 
 ## 10-bit and HDR handling
 
-The script automatically handles 10-bit and HDR input based on hardware capabilities:
+Capabilities are tracked per accelerator, not globally. For example, a machine can report both:
 
-| Input | Output Codec | Hardware Support | Result |
-|-------|--------------|------------------|--------|
-| 10-bit | H264 | any | Convert to 8-bit (H264 can't encode 10-bit) |
-| 10-bit | HEVC | 10-bit encode | Keep 10-bit |
+```text
+DECODE_10BIT='qsv=1;vaapi=1;'
+ENCODE_10BIT='qsv=1;vaapi=1;'
+```
+
+When QSV or VAAPI proves HEVC 10-bit support, the runtime path keeps the video in P010/10-bit instead of forcing NV12. QSV uses HEVC Main10 when preserving 10-bit content.
+
+| Input | Output Codec | Selected Accel Support | Result |
+|-------|--------------|------------------------|--------|
+| 10-bit | H264 | decode supported | Convert to 8-bit |
+| 10-bit | HEVC | 10-bit encode | Keep 10-bit/Main10 |
 | 10-bit | HEVC | no 10-bit encode | Passthrough |
-| HDR | HEVC | 10-bit encode | Re-encode with HDR metadata preserved |
+| HDR | HEVC | 10-bit encode | Re-encode with HDR color metadata preserved |
 | HDR | HEVC | no 10-bit encode | Passthrough |
-| HDR | H264 | any | Passthrough (H264 doesn't support HDR) |
+| HDR | H264 | any | Passthrough |
 
-Conversion uses hardware scalers (`scale_cuda`, `scale_vaapi`, etc.) to stay on GPU.
+Conversion uses hardware scalers (`scale_qsv`, `scale_vaapi`, `scale_cuda`, etc.) when available.
 
 ## Capability caching
 
 On first run, the script:
-1. Downloads a 10-bit HEVC probe sample (~4MB from Jellyfin)
-2. Tests each encoder with real hwaccel decode/encode pipeline
-3. Caches results to `.capabilities.cache`
+1. Downloads a 10-bit HEVC probe sample (~4 MB from Jellyfin)
+2. Tests working decode/encode pipelines using that compressed media sample
+3. Benchmarks normal and low-power modes where supported
+4. Tracks 10-bit decode and encode support for each accelerator
+5. Caches the fastest working acceleration/codec combination
 
-```
+```text
 .capabilities.cache   # Cached encoder test results
 probe-sample.mkv      # Jellyfin 10-bit HEVC demo clip
 ```
 
-Example cache:
+Example cache from an Intel system with only `/dev/dri/renderD129` exposed:
+
 ```bash
-HW_FINGERPRINT='0x10de:0x2216;nvidia:NVIDIA_GeForce_RTX_3080;'
-BEST_ACCEL='nvenc'
-BEST_CODEC='h264'
+HW_FINGERPRINT='script=render-node-v4;dri:renderD129:0x8086:0x56a6;selected:dri=/dev/dri/renderD129,vaapi=/dev/dri/renderD129,qsv=/dev/dri/renderD129;'
+BEST_ACCEL='qsv'
+BEST_CODEC='hevc'
 BEST_LOW_POWER='0'
 SUPPORTS_10BIT_DECODE='true'
 SUPPORTS_10BIT_ENCODE='true'
-ENCODERS='h264_nvenc=6.29x;hevc_nvenc=5.85x;hevc_nvenc_10bit=1;libx264=3.83x;libx265=3.24x;'
+DECODE_10BIT='qsv=1;vaapi=1;'
+ENCODE_10BIT='qsv=1;vaapi=1;'
+ENCODERS='h264_qsv=14.1x;hevc_qsv=17.9x;hevc_qsv_10bit=1;h264_vaapi=12.7x;hevc_vaapi=13.2x;hevc_vaapi_10bit=1;libx264=3.27x;libx265=1.13x;'
 ```
 
-The `ENCODERS` field shows benchmark speeds (e.g., `6.29x` = 6.29x realtime). Low power mode results appear as `encoder(lp)=speed` when available.
+The `ENCODERS` field shows benchmark speeds (`17.9x` = 17.9x realtime). Low-power results appear as `encoder(lp)=speed` when available.
 
-The cache auto-invalidates when GPU hardware changes. Use `--recache` to force re-probe.
+The cache fingerprint includes the script version, exposed DRI devices, selected device overrides, and detected GPU hardware, so capability-changing updates invalidate old cache data automatically. Use `--recache` to force a fresh probe at any time.
 
-### Docker usage
+### Docker/LXC usage
 
-The cache lives in the script directory, so just mount the whole folder:
+The cache lives in the script directory, so mount the whole folder when running from Docker:
 
 ```yaml
 volumes:
   - /path/to/ffmpeg-smart:/app
 ```
 
-## Hardware detection order
+For GPU access, expose the desired render node into the container. The device does not have to be `renderD128`; `renderD129` and other render-node numbers are supported.
 
-1. macOS → VideoToolbox
-2. `/dev/nvidia0` exists → NVENC
-3. Intel GPU → VAAPI
-4. AMD GPU → VAAPI
-5. V4L2 M2M device (ARM boards) → V4L2M2M
-6. DRI device exists → VAAPI
-7. Nothing found → software
+## Hardware candidate detection and selection
+
+The script first detects usable candidates, then benchmarks them. It does not assume that one acceleration API is always faster than another.
+
+- macOS: VideoToolbox candidate
+- `/dev/nvidia0`: NVENC candidate
+- Exposed Intel render node: QSV and VAAPI candidates when compiled into FFmpeg
+- Exposed AMD render node: VAAPI candidate when compiled into FFmpeg
+- V4L2 M2M device: V4L2 M2M candidate
+- Software encoders are always retained as fallback candidates
+
+The real-media benchmark determines `BEST_ACCEL`, `BEST_CODEC`, and (for QSV/VAAPI) whether low-power mode is faster.
 
 ## Intel low power mode
 
-Intel GPUs support a "low power" encoding mode (VDEnc) that can be faster than the standard encoder. The script benchmarks both modes and selects the faster one if it works.
+Intel GPUs support a low-power encoding mode (VDEnc) that can be faster than the standard encoder. The script benchmarks both modes and selects the faster one when it works.
 
-**Requirements for low power mode with VBR/CBR rate control:**
-- HuC (Hardware uCode) firmware must be loaded
-- Enable via kernel parameter: `i915.enable_guc=2`
+**Requirements for low power mode with VBR/CBR rate control may include:**
+- HuC (Hardware uCode) firmware loaded
+- Appropriate i915/xe firmware and driver support for the platform
 
-Without HuC, low power mode only supports CQP (constant quality), not VBR bitrate control. Since streaming requires VBR for bandwidth control, the script will fall back to normal encoding mode on systems without HuC.
+If low-power VBR fails, normal mode remains available and is used when it benchmarks successfully.
 
-To check if HuC is loaded:
+To inspect HuC-related kernel messages on i915 systems:
+
 ```bash
 dmesg | grep -i huc
-# Should show: "HuC: authenticated"
 ```
 
 ## Benchmarking
@@ -155,18 +197,8 @@ dmesg | grep -i huc
 ./benchmark-accel.sh 30 3  # 30 seconds per test, 3 runs each
 ```
 
-Downloads Jellyfin demo files and benchmarks all encoder combinations.
+`benchmark-accel.sh` uses the same `/dev/dri/renderD*` discovery and `DRI_DEVICE` / `QSV_DEVICE` / `VAAPI_DEVICE` overrides as `ffmpeg-smart.sh`.
 
-### Benchmark results
+Downloads demo files and benchmarks all working encoder combinations. The reported results are hardware- and driver-specific; `ffmpeg-smart.sh` uses its own current real-media probe rather than relying on a fixed acceleration or codec preference.
 
-Tested on Intel integrated graphics (1080p HEVC source):
-
-| Accel | H264 | HEVC |
-|-------|------|------|
-| vaapi | 5.8x | 2.9x |
-| qsv | 5.5x | 3.6x |
-| software | 1.4x | 0.4x |
-
-**H264 is ~2x faster than HEVC** across all accelerators. This is why `-vc h264` is the default.
-
-For live streams, anything above 1x realtime is sufficient. Software HEVC (0.4x) cannot keep up with realtime.
+For live streams, anything above 1x realtime is sufficient, though additional headroom is useful for multiple simultaneous streams.
