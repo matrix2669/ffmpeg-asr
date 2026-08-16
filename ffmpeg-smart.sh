@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v8"
+VERSION="render-node-v9"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -475,12 +475,48 @@ accel_has_capability() {
     [[ "$caps" == *"${accel}=1;"* ]]
 }
 
+parse_bitrate() {
+    local value="${1,,}"
+    local number unit multiplier
+
+    value="${value//[[:space:]]/}"
+    value="${value%bps}"
+
+    if [[ "$value" =~ ^([0-9]+([.][0-9]+)?)([kmg]?)$ ]]; then
+        number="${BASH_REMATCH[1]}"
+        unit="${BASH_REMATCH[3]}"
+        case "$unit" in
+            k) multiplier=1000 ;;
+            m) multiplier=1000000 ;;
+            g) multiplier=1000000000 ;;
+            *) multiplier=1 ;;
+        esac
+        awk "BEGIN {printf \"%.0f\\n\", $number * $multiplier}"
+        return 0
+    fi
+
+    return 1
+}
+
+append_reason() {
+    local reason="$1"
+    if [[ -n "$VIDEO_TRANSCODE_REASON" ]]; then
+        VIDEO_TRANSCODE_REASON+=", $reason"
+    else
+        VIDEO_TRANSCODE_REASON="$reason"
+    fi
+}
+
 AGENT=""
 URL=""
 VCODEC_OUT=""
-VCODEC_FORCED=false
 ALLOW_10BIT=""
 ALLOW_HDR=""
+MAX_RES=""
+MAX_CHANNELS=""
+MAX_BITRATE_INPUT=""
+MAX_BITRATE=""
+FORCE_SDR=false
 RECACHE=false
 ACCEL="__auto__"
 
@@ -520,13 +556,39 @@ while [[ $# -gt 0 ]]; do
         -user_agent) AGENT="$2"; shift 2 ;;
         -i) URL="$2"; shift 2 ;;
         -accel) ACCEL="$2"; shift 2 ;;
-        -vc) VCODEC_OUT="$2"; VCODEC_FORCED=true; shift 2 ;;
+        -vc) VCODEC_OUT="$2"; shift 2 ;;
         -10bit) ALLOW_10BIT=true; shift ;;
         -hdr) ALLOW_HDR=true; shift ;;
+        -maxres) MAX_RES="$2"; shift 2 ;;
+        -maxchan) MAX_CHANNELS="$2"; shift 2 ;;
+        -maxbr|-maxbitrate) MAX_BITRATE_INPUT="$2"; shift 2 ;;
+        -sdr) FORCE_SDR=true; shift ;;
         --recache) RECACHE=true; shift ;;
         *) shift ;;
     esac
 done
+
+if [[ -n "$MAX_RES" ]]; then
+    if [[ ! "$MAX_RES" =~ ^[0-9]+$ ]] || [[ "$MAX_RES" -le 0 ]]; then
+        echo "$LOG_PREFIX ERROR: -maxres must be a positive vertical resolution (for example: 720)" >&2
+        exit 1
+    fi
+fi
+
+if [[ -n "$MAX_CHANNELS" ]]; then
+    if [[ ! "$MAX_CHANNELS" =~ ^[0-9]+$ ]] || [[ "$MAX_CHANNELS" -le 0 ]]; then
+        echo "$LOG_PREFIX ERROR: -maxchan must be a positive channel count (for example: 2)" >&2
+        exit 1
+    fi
+fi
+
+if [[ -n "$MAX_BITRATE_INPUT" ]]; then
+    MAX_BITRATE="$(parse_bitrate "$MAX_BITRATE_INPUT" || true)"
+    if [[ -z "$MAX_BITRATE" || ! "$MAX_BITRATE" =~ ^[0-9]+$ || "$MAX_BITRATE" -le 0 ]]; then
+        echo "$LOG_PREFIX ERROR: -maxbr/-maxbitrate must be a positive bitrate (for example: 2M, 2000k, or 2000000)" >&2
+        exit 1
+    fi
+fi
 
 if [[ "$RECACHE" == "true" ]] || ! load_cache 2>/dev/null; then
     save_cache
@@ -596,6 +658,7 @@ PIX_FMT=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .pi
 COLOR_TRANSFER=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .color_transfer // empty' | head -n1)
 WIDTH=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .width // 0' | head -n1)
 HEIGHT=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .height // 0' | head -n1)
+VBITRATE_RAW=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .bit_rate // empty' | head -n1)
 ACODEC=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .codec_name // empty' | head -n1)
 ACHANNELS=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .channels // empty' | head -n1)
 AUDIO_STREAM_COUNT=$(echo "$PROBE" | jq '[.streams[] | select(.codec_type=="audio")] | length')
@@ -612,55 +675,104 @@ SOURCE_10BIT=false
 IS_HDR=false
 [[ "$COLOR_TRANSFER" == "smpte2084" || "$COLOR_TRANSFER" == "arib-std-b67" ]] && IS_HDR=true
 
-# Normalizer-first policy: stream-copy video only when the source already
-# satisfies the resolved output policy. The policy comes from explicit flags
-# when supplied, otherwise from the selected cached hardware capabilities.
-VIDEO_COPY_REASON=""
-VIDEO_TRANSCODE_REASON=""
-if [[ "$VCODEC" != "$VCODEC_OUT" ]]; then
-    VIDEO_TRANSCODE_REASON="codec ${VCODEC}->${VCODEC_OUT}"
-elif [[ "$SOURCE_10BIT" == "true" && "$ALLOW_10BIT" != "true" ]]; then
-    VIDEO_TRANSCODE_REASON="10-bit not allowed"
-elif [[ "$IS_HDR" == "true" && "$ALLOW_HDR" != "true" ]]; then
-    VIDEO_TRANSCODE_REASON="HDR not allowed"
-else
-    VIDEO_COPY_REASON="matches policy codec=${VCODEC_OUT} 10bit=${ALLOW_10BIT} hdr=${ALLOW_HDR}"
+TARGET_WIDTH="$WIDTH"
+TARGET_HEIGHT="$HEIGHT"
+if [[ -n "$MAX_RES" && "$HEIGHT" -gt "$MAX_RES" ]]; then
+    TARGET_HEIGHT="$MAX_RES"
+    TARGET_WIDTH=$(( WIDTH * TARGET_HEIGHT / HEIGHT ))
+    TARGET_WIDTH=$(( TARGET_WIDTH / 2 * 2 ))
+    [[ "$TARGET_WIDTH" -lt 2 ]] && TARGET_WIDTH=2
 fi
 
-# Audio policy:
-# - AAC input is stream-copied unchanged.
-# - Non-AAC input is converted to AAC at predictable channel-based bitrates.
-# - Unknown channel layouts are downmixed to stereo.
+# Stream-copy video only when the source already satisfies every active policy.
+# Codec/10-bit/HDR still resolve from explicit flags or cached capabilities;
+# maxres/maxbr/sdr are optional independent constraints.
+VIDEO_COPY_REASON=""
+VIDEO_TRANSCODE_REASON=""
+
+if [[ "$VCODEC" != "$VCODEC_OUT" ]]; then
+    append_reason "codec ${VCODEC}->${VCODEC_OUT}"
+fi
+
+if [[ "$SOURCE_10BIT" == "true" && "$ALLOW_10BIT" != "true" ]]; then
+    append_reason "10-bit not allowed"
+fi
+
+if [[ "$IS_HDR" == "true" ]]; then
+    if [[ "$FORCE_SDR" == "true" ]]; then
+        append_reason "HDR->SDR"
+    elif [[ "$ALLOW_HDR" != "true" ]]; then
+        append_reason "HDR not allowed"
+    fi
+fi
+
+if [[ "$TARGET_HEIGHT" -ne "$HEIGHT" ]]; then
+    append_reason "resolution ${WIDTH}x${HEIGHT}->${TARGET_WIDTH}x${TARGET_HEIGHT}"
+fi
+
+if [[ -n "$MAX_BITRATE" ]]; then
+    if [[ "$VBITRATE_RAW" =~ ^[0-9]+$ ]]; then
+        if [[ "$VBITRATE_RAW" -gt "$MAX_BITRATE" ]]; then
+            append_reason "bitrate ${VBITRATE_RAW}>${MAX_BITRATE}"
+        fi
+    else
+        # A maximum cannot be guaranteed when a live source does not publish
+        # its video bitrate, so enforce the requested limit by transcoding.
+        append_reason "bitrate unknown; enforce max ${MAX_BITRATE}"
+    fi
+fi
+
+if [[ -z "$VIDEO_TRANSCODE_REASON" ]]; then
+    VIDEO_COPY_REASON="matches active video policy"
+fi
+
+# Audio is independent from video. AAC is copied unless maxchan requires a
+# downmix. Non-AAC audio is converted to AAC using the target channel count.
 AUDIO_ARGS=()
 AUDIO_INFO="none"
 if [[ "$HAS_AUDIO" == "true" ]]; then
-    if [[ "$ACODEC" == "aac" ]]; then
+    AUDIO_SOURCE_CHANNELS="${ACHANNELS:-0}"
+    [[ "$AUDIO_SOURCE_CHANNELS" =~ ^[0-9]+$ ]] || AUDIO_SOURCE_CHANNELS=0
+
+    AUDIO_TARGET_CHANNELS="$AUDIO_SOURCE_CHANNELS"
+    if [[ -n "$MAX_CHANNELS" ]]; then
+        if [[ "$AUDIO_SOURCE_CHANNELS" -eq 0 || "$AUDIO_SOURCE_CHANNELS" -gt "$MAX_CHANNELS" ]]; then
+            AUDIO_TARGET_CHANNELS="$MAX_CHANNELS"
+        fi
+    fi
+    [[ "$AUDIO_TARGET_CHANNELS" -gt 0 ]] || AUDIO_TARGET_CHANNELS="${MAX_CHANNELS:-2}"
+
+    AUDIO_NEEDS_TRANSCODE=false
+    [[ "$ACODEC" != "aac" ]] && AUDIO_NEEDS_TRANSCODE=true
+    if [[ -n "$MAX_CHANNELS" && ( "$AUDIO_SOURCE_CHANNELS" -eq 0 || "$AUDIO_SOURCE_CHANNELS" -gt "$MAX_CHANNELS" ) ]]; then
+        AUDIO_NEEDS_TRANSCODE=true
+    fi
+
+    if [[ "$AUDIO_NEEDS_TRANSCODE" == "false" ]]; then
         AUDIO_ARGS=(-c:a copy)
-        AUDIO_INFO="aac copy ${ACHANNELS:-unknown}ch"
+        AUDIO_INFO="aac copy ${AUDIO_SOURCE_CHANNELS}ch"
     else
         CHANNEL_LAYOUT_ARGS=()
-        AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown}"
-        case "$ACHANNELS" in
+        case "$AUDIO_TARGET_CHANNELS" in
             1)
                 ABITRATE=96000
-                CHANNEL_LAYOUT_ARGS=(-ch_layout mono)
+                CHANNEL_LAYOUT_ARGS=(-ac 1 -ch_layout mono)
                 ;;
             2)
                 ABITRATE=192000
-                CHANNEL_LAYOUT_ARGS=(-ch_layout stereo)
+                CHANNEL_LAYOUT_ARGS=(-ac 2 -ch_layout stereo)
                 ;;
             6)
                 ABITRATE=384000
-                CHANNEL_LAYOUT_ARGS=(-ch_layout 5.1)
+                CHANNEL_LAYOUT_ARGS=(-ac 6 -ch_layout 5.1)
                 ;;
             8)
                 ABITRATE=512000
-                CHANNEL_LAYOUT_ARGS=(-ch_layout 7.1)
+                CHANNEL_LAYOUT_ARGS=(-ac 8 -ch_layout 7.1)
                 ;;
             *)
-                ABITRATE=192000
-                CHANNEL_LAYOUT_ARGS=(-ac 2 -ch_layout stereo)
-                AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown} -> 2 (forced)"
+                ABITRATE=$((64000 * AUDIO_TARGET_CHANNELS))
+                CHANNEL_LAYOUT_ARGS=(-ac "$AUDIO_TARGET_CHANNELS")
                 ;;
         esac
 
@@ -670,7 +782,12 @@ if [[ "$HAS_AUDIO" == "true" ]]; then
             "${CHANNEL_LAYOUT_ARGS[@]}"
             -af "aresample=async=1"
         )
-        AUDIO_INFO="${ACODEC:-unknown}->aac ${ABITRATE}bps ${AUDIO_CHANNELS_DISPLAY}ch"
+
+        if [[ "$AUDIO_SOURCE_CHANNELS" -gt 0 && "$AUDIO_SOURCE_CHANNELS" -ne "$AUDIO_TARGET_CHANNELS" ]]; then
+            AUDIO_INFO="${ACODEC:-unknown}->aac ${ABITRATE}bps ${AUDIO_SOURCE_CHANNELS}->${AUDIO_TARGET_CHANNELS}ch"
+        else
+            AUDIO_INFO="${ACODEC:-unknown}->aac ${ABITRATE}bps ${AUDIO_TARGET_CHANNELS}ch"
+        fi
     fi
 fi
 
@@ -731,6 +848,9 @@ else
     [[ "$VCODEC_OUT" == "hevc" ]] && TAG_ARGS="-tag:v hvc1" || TAG_ARGS=""
 fi
 
+NEED_SDR=false
+[[ "$FORCE_SDR" == "true" && "$IS_HDR" == "true" ]] && NEED_SDR=true
+
 set_hwaccel_args() {
     case "$ACCEL" in
         qsv)
@@ -742,9 +862,21 @@ set_hwaccel_args() {
                 -hwaccel_output_format qsv
             )
             ;;
-        vaapi) HWACCEL_ARGS=(-hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE") ;;
-        nvenc) HWACCEL_ARGS=(-hwaccel cuda -hwaccel_output_format cuda) ;;
-        videotoolbox) HWACCEL_ARGS=(-hwaccel videotoolbox) ;;
+        vaapi)
+            HWACCEL_ARGS=(-hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE")
+            ;;
+        nvenc)
+            if [[ "$NEED_SDR" == "true" ]]; then
+                # Software frames make the generic zscale/tonemap path reliable;
+                # NVENC can upload the resulting frames internally for encoding.
+                HWACCEL_ARGS=()
+            else
+                HWACCEL_ARGS=(-hwaccel cuda -hwaccel_output_format cuda)
+            fi
+            ;;
+        videotoolbox)
+            [[ "$NEED_SDR" == "true" ]] && HWACCEL_ARGS=() || HWACCEL_ARGS=(-hwaccel videotoolbox)
+            ;;
         *) HWACCEL_ARGS=() ;;
     esac
 }
@@ -777,50 +909,75 @@ set_encoder_opts() {
 set_hwaccel_args
 set_encoder_opts
 
-VF_ARGS=""
-PROFILE_ARGS=""
-if [[ "$SOURCE_10BIT" == "true" && "$ALLOW_10BIT" != "true" ]]; then
-    # Policy requires an 8-bit output from a 10-bit source.
-    case "$ACCEL" in
-        nvenc) VF_ARGS="-vf scale_cuda=format=nv12" ;;
-        vaapi) VF_ARGS="-vf scale_vaapi=format=nv12" ;;
-        qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
-        *) VF_ARGS="-pix_fmt yuv420p" ;;
-    esac
-elif [[ "$SOURCE_10BIT" == "true" && "$VCODEC_OUT" == "h264" ]]; then
-    # This script's H264 output path is 8-bit.
-    case "$ACCEL" in
-        nvenc) VF_ARGS="-vf scale_cuda=format=nv12" ;;
-        vaapi) VF_ARGS="-vf scale_vaapi=format=nv12" ;;
-        qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
-        *) VF_ARGS="-pix_fmt yuv420p" ;;
-    esac
-elif [[ "$SOURCE_10BIT" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "true" ]]; then
-    case "$ACCEL" in
-        vaapi) VF_ARGS="-vf scale_vaapi=format=p010le" ;;
-        qsv)
-            VF_ARGS="-vf scale_qsv=format=p010le"
-            PROFILE_ARGS="-profile:v main10"
-            ;;
-        *) VF_ARGS="-pix_fmt yuv420p10le" ;;
-    esac
-elif [[ "$ACCEL" == "vaapi" || "$ACCEL" == "qsv" ]]; then
-    case "$ACCEL" in
-        vaapi) VF_ARGS="-vf format=nv12|vaapi,hwupload,scale_vaapi=format=nv12" ;;
-        qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
-    esac
+# Preserve 10-bit only when the source is 10-bit, the resolved policy allows it,
+# the output codec is HEVC, and HDR->SDR tone mapping is not forcing an 8-bit SDR output.
+OUTPUT_10BIT=false
+if [[ "$SOURCE_10BIT" == "true" && "$ALLOW_10BIT" == "true" && "$VCODEC_OUT" == "hevc" && "$NEED_SDR" != "true" ]]; then
+    OUTPUT_10BIT=true
 fi
 
+TARGET_PIX_FMT="nv12"
+[[ "$OUTPUT_10BIT" == "true" ]] && TARGET_PIX_FMT="p010le"
+
+VF_ARGS=""
+PROFILE_ARGS=""
+COLOR_ARGS=""
+
+if [[ "$NEED_SDR" == "true" ]]; then
+    # QSV VPP and VAAPI both provide hardware HDR10->SDR tone mapping. FFmpeg's
+    # QSV VPP sets the resulting color properties to BT.709 when tone mapping.
+    case "$ACCEL" in
+        qsv)
+            VF_ARGS="-vf vpp_qsv=w=${TARGET_WIDTH}:h=${TARGET_HEIGHT}:format=nv12:tonemap=1"
+            ;;
+        vaapi)
+            VF_ARGS="-vf tonemap_vaapi=format=nv12,scale_vaapi=w=${TARGET_WIDTH}:h=${TARGET_HEIGHT}:format=nv12"
+            ;;
+        *)
+            VF_ARGS="-vf zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale=${TARGET_WIDTH}:${TARGET_HEIGHT},format=yuv420p"
+            ;;
+    esac
+    COLOR_ARGS="-color_primaries bt709 -color_trc bt709 -colorspace bt709"
+elif [[ "$ACCEL" == "qsv" ]]; then
+    VF_ARGS="-vf scale_qsv=w=${TARGET_WIDTH}:h=${TARGET_HEIGHT}:format=${TARGET_PIX_FMT}"
+    [[ "$OUTPUT_10BIT" == "true" ]] && PROFILE_ARGS="-profile:v main10"
+elif [[ "$ACCEL" == "vaapi" ]]; then
+    VF_ARGS="-vf scale_vaapi=w=${TARGET_WIDTH}:h=${TARGET_HEIGHT}:format=${TARGET_PIX_FMT}"
+elif [[ "$ACCEL" == "nvenc" ]]; then
+    if [[ "$TARGET_WIDTH" -ne "$WIDTH" || "$TARGET_HEIGHT" -ne "$HEIGHT" || "$SOURCE_10BIT" == "true" ]]; then
+        VF_ARGS="-vf scale_cuda=w=${TARGET_WIDTH}:h=${TARGET_HEIGHT}:format=${TARGET_PIX_FMT}"
+    fi
+else
+    if [[ "$TARGET_WIDTH" -ne "$WIDTH" || "$TARGET_HEIGHT" -ne "$HEIGHT" ]]; then
+        VF_ARGS="-vf scale=${TARGET_WIDTH}:${TARGET_HEIGHT}"
+    fi
+    if [[ "$OUTPUT_10BIT" == "true" ]]; then
+        [[ -n "$VF_ARGS" ]] && VF_ARGS="${VF_ARGS%,},format=yuv420p10le" || VF_ARGS="-vf format=yuv420p10le"
+    elif [[ "$SOURCE_10BIT" == "true" ]]; then
+        [[ -n "$VF_ARGS" ]] && VF_ARGS="${VF_ARGS%,},format=yuv420p" || VF_ARGS="-vf format=yuv420p"
+    fi
+fi
+
+# Preserve HDR color signalling only when HDR is allowed and SDR conversion was not requested.
 HDR_ARGS=""
-if [[ "$IS_HDR" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_HDR" == "true" ]]; then
+if [[ "$IS_HDR" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_HDR" == "true" && "$NEED_SDR" != "true" ]]; then
     HDR_ARGS="-color_primaries bt2020 -color_trc $COLOR_TRANSFER -colorspace bt2020nc"
 fi
 
+# Bitrate target uses the output resolution. A supplied max bitrate becomes a
+# hard maxrate for the transcode; without one, retain the existing 125% headroom.
 BASE_VBITRATE=8000000
-VBITRATE=$((BASE_VBITRATE * WIDTH * HEIGHT / 1920 / 1080))
+VBITRATE=$((BASE_VBITRATE * TARGET_WIDTH * TARGET_HEIGHT / 1920 / 1080))
 [[ $VBITRATE -lt 2000000 ]] && VBITRATE=2000000
-MAXRATE=$((VBITRATE * 125 / 100))
-BUFSIZE=$((VBITRATE * 2))
+
+if [[ -n "$MAX_BITRATE" ]]; then
+    [[ "$VBITRATE" -gt "$MAX_BITRATE" ]] && VBITRATE="$MAX_BITRATE"
+    MAXRATE="$MAX_BITRATE"
+    BUFSIZE=$((MAX_BITRATE * 2))
+else
+    MAXRATE=$((VBITRATE * 125 / 100))
+    BUFSIZE=$((VBITRATE * 2))
+fi
 
 if [[ "$FPS_FRAC" =~ ^([0-9]+)/([0-9]+)$ ]]; then
     NUM=${BASH_REMATCH[1]}
@@ -846,7 +1003,13 @@ case "$ACCEL" in
     vaapi) DEVICE_INFO=" device=$VAAPI_DEVICE" ;;
 esac
 
-echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER reason=${VIDEO_TRANSCODE_REASON} GOP=$GOP${GOP_WARN} audio=${AUDIO_INFO} accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT} hdr=${ALLOW_HDR}" >&2
+PROFILE_INFO=""
+[[ -n "$MAX_RES" ]] && PROFILE_INFO+=" maxres=${MAX_RES}"
+[[ -n "$MAX_BITRATE" ]] && PROFILE_INFO+=" maxbr=${MAX_BITRATE}"
+[[ -n "$MAX_CHANNELS" ]] && PROFILE_INFO+=" maxchan=${MAX_CHANNELS}"
+[[ "$FORCE_SDR" == "true" ]] && PROFILE_INFO+=" sdr=true"
+
+echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER ${TARGET_WIDTH}x${TARGET_HEIGHT} reason=${VIDEO_TRANSCODE_REASON} GOP=$GOP${GOP_WARN} audio=${AUDIO_INFO} accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT} hdr=${ALLOW_HDR}${PROFILE_INFO}" >&2
 
 exec ffmpeg \
     "${UA_ARGS[@]}" \
@@ -862,6 +1025,7 @@ exec ffmpeg \
     $VF_ARGS \
     $PROFILE_ARGS \
     $HDR_ARGS \
+    $COLOR_ARGS \
     -b:v "$VBITRATE" \
     -maxrate "$MAXRATE" \
     -bufsize "$BUFSIZE" \
