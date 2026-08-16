@@ -12,6 +12,48 @@ RUNS="${2:-3}"
 
 mkdir -p "$RESULTS_DIR" "$SAMPLES_DIR"
 
+# DRI device selection. DRI_DEVICE can override both VAAPI and QSV;
+# VAAPI_DEVICE and QSV_DEVICE can override them independently.
+DRI_DEVICE="${DRI_DEVICE:-}"
+VAAPI_DEVICE="${VAAPI_DEVICE:-}"
+QSV_DEVICE="${QSV_DEVICE:-}"
+
+get_dri_vendor() {
+    local dev="$1"
+    local node="${dev##*/}"
+    local vendor_file="/sys/class/drm/$node/device/vendor"
+
+    [[ -r "$vendor_file" ]] || return 1
+    cat "$vendor_file" 2>/dev/null
+}
+
+auto_select_dri_device() {
+    local dev vendor
+    local fallback=""
+
+    for dev in /dev/dri/renderD*; do
+        [[ -e "$dev" ]] || continue
+        [[ -z "$fallback" ]] && fallback="$dev"
+
+        vendor="$(get_dri_vendor "$dev" || true)"
+        case "$vendor" in
+            0x8086|0x1002)
+                echo "$dev"
+                return 0
+                ;;
+        esac
+    done
+
+    [[ -n "$fallback" ]] && { echo "$fallback"; return 0; }
+    return 1
+}
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+    [[ -z "$DRI_DEVICE" ]] && DRI_DEVICE="$(auto_select_dri_device || true)"
+    [[ -z "$VAAPI_DEVICE" ]] && VAAPI_DEVICE="$DRI_DEVICE"
+    [[ -z "$QSV_DEVICE" ]] && QSV_DEVICE="$DRI_DEVICE"
+fi
+
 # Jellyfin test files - same content, different codecs
 declare -A TEST_FILES=(
     ["h264_1080p"]="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-20-mbps-hd-h264.mkv"
@@ -23,38 +65,35 @@ declare -A TEST_FILES=(
 # Global encoder list (cached)
 ENCODERS=""
 
-# Detect available hardware based on actual devices (not just compiled encoders)
+# Detect available hardware based on devices actually exposed in /dev.
 detect_encoders() {
     local available=()
+    local vendor=""
 
     # NVIDIA - check for device
     if [[ -e /dev/nvidia0 ]] && echo "$ENCODERS" | grep -qw "h264_nvenc"; then
         available+=("nvenc")
     fi
 
-    # Intel/AMD - check DRI vendor
-    local vendor
-    for v in /sys/class/drm/renderD*/device/vendor; do
-        [[ -r "$v" ]] || continue
-        vendor=$(cat "$v" 2>/dev/null)
+    # Intel QSV on the selected, actually exposed render node.
+    if [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]]; then
+        vendor="$(get_dri_vendor "$QSV_DEVICE" || true)"
+        if [[ "$vendor" == "0x8086" ]] && echo "$ENCODERS" | grep -qw "h264_qsv"; then
+            available+=("qsv")
+        fi
+    fi
+
+    # Intel/AMD VAAPI on the selected, actually exposed render node.
+    if [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]]; then
+        vendor="$(get_dri_vendor "$VAAPI_DEVICE" || true)"
         case "$vendor" in
-            0x8086)  # Intel
-                if echo "$ENCODERS" | grep -qw "h264_qsv"; then
-                    available+=("qsv")
-                fi
+            0x8086|0x1002)
                 if echo "$ENCODERS" | grep -qw "h264_vaapi"; then
                     available+=("vaapi")
                 fi
-                break
-                ;;
-            0x1002)  # AMD
-                if echo "$ENCODERS" | grep -qw "h264_vaapi"; then
-                    available+=("vaapi")
-                fi
-                break
                 ;;
         esac
-    done
+    fi
 
     # VideoToolbox (macOS)
     if [[ "$(uname -s)" == "Darwin" ]] && echo "$ENCODERS" | grep -qw "h264_videotoolbox"; then
@@ -85,18 +124,17 @@ get_hwaccel_args() {
             echo "-hwaccel cuda -hwaccel_output_format cuda"
             ;;
         qsv)
-            echo "-hwaccel qsv -hwaccel_output_format qsv"
+            [[ -n "$QSV_DEVICE" ]] || return 1
+            echo "-init_hw_device qsv=qsv:hw,child_device=$QSV_DEVICE -filter_hw_device qsv -hwaccel qsv -hwaccel_device qsv -hwaccel_output_format qsv"
             ;;
         vaapi)
-            echo "-hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device ${VAAPI_DEVICE:-/dev/dri/renderD128}"
+            [[ -n "$VAAPI_DEVICE" ]] || return 1
+            echo "-hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device $VAAPI_DEVICE"
             ;;
         videotoolbox)
             echo "-hwaccel videotoolbox"
             ;;
-        v4l2m2m)
-            echo ""  # v4l2m2m doesn't use hwaccel input
-            ;;
-        software)
+        v4l2m2m|software)
             echo ""
             ;;
     esac
@@ -140,7 +178,6 @@ download_samples() {
                 echo "Neither curl nor wget available"
                 return 1
             fi
-            # Verify download
             local size
             size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null)
             if [[ $size -lt 1000000 ]]; then
@@ -167,8 +204,7 @@ run_encode() {
     local output_file="$RESULTS_DIR/test_output.ts"
     local log_file="$RESULTS_DIR/ffmpeg.log"
 
-    # Build ffmpeg command as array
-    local cmd=(ffmpeg -hide_banner -y)
+    local cmd=(ffmpeg -nostdin -hide_banner -y)
     if [[ -n "$hwaccel_args" ]]; then
         local -a hw_args
         read -ra hw_args <<< "$hwaccel_args"
@@ -183,18 +219,15 @@ run_encode() {
     fi
     cmd+=(-an -f mpegts "$output_file")
 
-    # Run and capture output (disable errexit for this block)
     set +e
     "${cmd[@]}" > "$log_file" 2>&1
     local rc=$?
     set -e
 
     if [[ $rc -eq 0 ]] && grep -q "frame=" "$log_file"; then
-        # Parse FPS from log - use speed multiplier if fps=0 (fast encodes)
         local fps speed input_fps
         fps=$(sed -n 's/.*fps= *\([0-9.]*\).*/\1/p' "$log_file" 2>/dev/null | tail -1)
 
-        # If fps is 0 or empty, calculate from speed=Nx and input framerate
         if [[ -z "$fps" || "$fps" == "0" || "$fps" == "0.0" || "$fps" == "0.00" ]]; then
             speed=$(sed -n 's/.*speed= *\([0-9.]*\)x.*/\1/p' "$log_file" 2>/dev/null | tail -1)
             input_fps=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$input" 2>/dev/null | head -1)
@@ -222,7 +255,6 @@ run_benchmarks() {
     echo "=============================================="
     echo ""
 
-    # Test matrix
     for source in "${!TEST_FILES[@]}"; do
         local url="${TEST_FILES[$source]}"
         local ext="${url##*.}"
@@ -232,7 +264,6 @@ run_benchmarks() {
         echo "=== Source: $source ==="
 
         for accel in "${encoders[@]}"; do
-            # Determine power modes to test (vaapi/qsv support low_power)
             local power_modes=("normal")
             if [[ "$accel" == "vaapi" || "$accel" == "qsv" ]]; then
                 power_modes+=("low_power")
@@ -242,7 +273,6 @@ run_benchmarks() {
                 local encoder
                 encoder=$(get_encoder "$codec" "$accel")
 
-                # Check encoder exists
                 if ! echo "$ENCODERS" | grep -qw "$encoder"; then
                     continue
                 fi
@@ -263,11 +293,11 @@ run_benchmarks() {
                     local fps_sum=0
                     local fps_count=0
                     local failed=0
+                    local fps
 
                     for run in $(seq 1 "$RUNS"); do
                         fps=$(run_encode "$input" "$encoder" "$hwaccel_args" "$encoder_opts" 2>/dev/null || echo "0")
 
-                        # Check for failure (0, empty, or very low fps indicating no actual encoding)
                         if [[ -z "$fps" || "$fps" == "0" || "$fps" == "0.0" ]]; then
                             failed=1
                             break
@@ -295,12 +325,10 @@ run_benchmarks() {
     echo "Results saved to: $results_csv"
     echo "=============================================="
 
-    # Print summary
     echo ""
     echo "=== SUMMARY (avg fps) ==="
     echo ""
 
-    # Generate summary from CSV
     awk -F',' 'NR>1 {
         mode_suffix = ($4 == "low_power") ? "(lp)" : ""
         key = $1 "," $2 mode_suffix "," $3
@@ -326,10 +354,14 @@ download_samples || exit 1
 
 # Detect available encoders
 echo "Detecting hardware encoders..."
-# Cache encoder list globally first (avoid subshell issue)
 ENCODERS=$(ffmpeg -hide_banner -encoders 2>/dev/null)
 read -ra AVAILABLE_ENCODERS <<< "$(detect_encoders)"
 echo "Found: ${AVAILABLE_ENCODERS[*]}"
+if [[ "$(uname -s)" == "Linux" ]]; then
+    echo "DRI device: ${DRI_DEVICE:-none}"
+    echo "QSV device: ${QSV_DEVICE:-none}"
+    echo "VAAPI device: ${VAAPI_DEVICE:-none}"
+fi
 echo ""
 
 # Run benchmarks
