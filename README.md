@@ -17,6 +17,7 @@ Key features:
 - HEVC Main10/P010 preservation when allowed
 - Optional maximum resolution, bitrate, and audio-channel limits
 - Optional HDR-to-SDR tone mapping
+- Optional interlaced-to-progressive deinterlacing
 - AAC passthrough and predictable AAC conversion for non-AAC/downmixed audio
 - MPEG-TS remuxing, timestamp normalization, reconnect handling, and PAT/PMT refresh
 
@@ -43,9 +44,11 @@ The normalized MPEG-TS stream is written to stdout.
 | `-maxbitrate` | unset | Alias for `-maxbr` |
 | `-maxchan` | unset | Maximum number of audio channels, for example `2`; audio is never upmixed |
 | `-sdr` | unset | Require SDR output; HDR sources are tone-mapped to BT.709 SDR |
+| `-deint` | unset | Require progressive output for detected interlaced video |
+| `-deinterlace` | unset | Alias for `-deint` |
 | `--recache` | | Force a fresh capability probe |
 
-`-maxres`, `-maxbr`/`-maxbitrate`, `-maxchan`, and `-sdr` are independent optional constraints. Any one can be used by itself, or they can be combined.
+`-maxres`, `-maxbr`/`-maxbitrate`, `-maxchan`, `-sdr`, and `-deint` are independent optional constraints. Any one can be used by itself, or they can be combined.
 
 ## Policy model
 
@@ -64,6 +67,7 @@ It then applies any optional profile limits that were supplied:
 -maxbr       maximum encoded video bitrate
 -maxchan     maximum audio channel count
 -sdr         require SDR/BT.709 output
+-deint       require progressive output when the source is interlaced
 ```
 
 A video stream is copied only when it already satisfies every active video constraint. Any mismatch sends the video through the selected transcode path.
@@ -75,16 +79,18 @@ Source HEVC SDR, no extra limits        -> video copy
 Source H264 SDR                         -> H264 -> HEVC transcode
 Source HEVC 1080p + -maxres 720         -> HEVC 720p transcode
 Source HEVC HDR + -sdr                  -> HDR -> SDR transcode
+Source interlaced + -deint              -> progressive transcode
+Source progressive + -deint             -> no deinterlace work
 Source HEVC <=2M + -maxbr 2M            -> video copy when bitrate is known
 Source HEVC >2M + -maxbr 2M             -> bitrate-limited transcode
 Source bitrate unknown + -maxbr 2M      -> transcode so the maximum can be guaranteed
 ```
 
-The script does not resize, bitrate-limit, channel-limit, or tone-map unless the corresponding constraint is supplied or another active policy already requires a transcode.
+The script does not resize, bitrate-limit, channel-limit, tone-map, or deinterlace unless the corresponding constraint is supplied or another active policy already requires a transcode.
 
 ## Dispatcharr mobile-profile example
 
-A profile that limits video to 720p/2 Mbps, audio to stereo, and converts HDR to SDR can call:
+A profile that limits video to 720p/2 Mbps, audio to stereo, converts HDR to SDR, and deinterlaces broadcast sources can call:
 
 ```bash
 ./ffmpeg-smart.sh \
@@ -92,7 +98,8 @@ A profile that limits video to 720p/2 Mbps, audio to stereo, and converts HDR to
   -maxres 720 \
   -maxbr 2M \
   -maxchan 2 \
-  -sdr
+  -sdr \
+  -deint
 ```
 
 Each limit is conditional:
@@ -101,6 +108,7 @@ Each limit is conditional:
 - A known video bitrate at or below 2 Mbps does not trigger a bitrate transcode.
 - Mono/stereo audio is not upmixed.
 - SDR video is not tone-mapped.
+- Progressive video is not deinterlaced.
 - AAC within the channel limit is copied unchanged.
 
 When a transcode is required with `-maxbr 2M`, the normal 720p target is capped to 85% of the ceiling (1.7 Mbps) while `-maxrate` remains 2 Mbps, leaving headroom for constrained-VBR peaks.
@@ -172,6 +180,22 @@ SDR sources are unaffected by this constraint. HDR sources are transcoded and to
 On QSV, the script uses QSV VPP tone mapping. On VAAPI, it uses `tonemap_vaapi`. Other accelerators use a software tone-map filter path before hardware encoding where possible.
 
 HDR-to-SDR output is intentionally 8-bit SDR for broad compatibility.
+
+## Deinterlace mode
+
+```bash
+-deint
+```
+
+The script reads the video stream's `field_order` from FFprobe. If the stream is detected as interlaced, `-deint` adds a video policy mismatch and produces progressive output. Progressive sources are unaffected.
+
+The deinterlace path keeps the source frame rate rather than doubling to field rate. For example, a 1080i29.97 source becomes 29.97p after deinterlacing.
+
+- QSV uses `vpp_qsv` advanced motion-adaptive deinterlacing and can combine deinterlace with scaling in the same hardware VPP stage.
+- VAAPI uses `deinterlace_vaapi` motion-adaptive mode at frame rate, followed by VAAPI scaling when needed.
+- Other paths use `bwdif` at frame rate before scaling/encoding.
+
+When `-deint` and `-sdr` are both required, the script combines the operations into the same transcode pipeline.
 
 ## Audio policy without `-maxchan`
 
