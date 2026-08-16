@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v5"
+VERSION="render-node-v6"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -687,7 +687,7 @@ PIX_FMT=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .pi
 COLOR_TRANSFER=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .color_transfer // empty' | head -n1)
 WIDTH=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .width // 0' | head -n1)
 HEIGHT=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .height // 0' | head -n1)
-ABITRATE_RAW=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .bit_rate // empty' | head -n1)
+ACODEC=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .codec_name // empty' | head -n1)
 ACHANNELS=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .channels // empty' | head -n1)
 AUDIO_STREAM_COUNT=$(echo "$PROBE" | jq '[.streams[] | select(.codec_type=="audio")] | length')
 HAS_AUDIO=false
@@ -764,38 +764,51 @@ if [[ "$IS_HDR" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_HDR" == "true" ]
     HDR_ARGS="-color_primaries bt2020 -color_trc $COLOR_TRANSFER -colorspace bt2020nc"
 fi
 
-# Build audio arguments only when an audio stream actually exists.
+# Audio policy:
+# - AAC input is stream-copied unchanged.
+# - Non-AAC input is converted to AAC at predictable channel-based bitrates.
+# - Unknown channel layouts are downmixed to stereo.
 AUDIO_ARGS=()
 AUDIO_INFO="none"
 if [[ "$HAS_AUDIO" == "true" ]]; then
-    if [[ -n "$ABITRATE_RAW" ]] && [[ "$ABITRATE_RAW" =~ ^[0-9]+$ ]] && [[ "$ABITRATE_RAW" -ge 60000 ]] && [[ "$ABITRATE_RAW" -le 500000 ]]; then
-        ABITRATE="$ABITRATE_RAW"
+    if [[ "$ACODEC" == "aac" ]]; then
+        AUDIO_ARGS=(-c:a copy)
+        AUDIO_INFO="aac copy ${ACHANNELS:-unknown}ch"
     else
-        ACHANNELS_NUM=${ACHANNELS:-2}
-        [[ "$ACHANNELS_NUM" =~ ^[0-9]+$ ]] || ACHANNELS_NUM=2
-        ABITRATE=$((64000 * ACHANNELS_NUM))
+        CHANNEL_LAYOUT_ARGS=()
+        AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown}"
+        case "$ACHANNELS" in
+            1)
+                ABITRATE=96000
+                CHANNEL_LAYOUT_ARGS=(-ch_layout mono)
+                ;;
+            2)
+                ABITRATE=192000
+                CHANNEL_LAYOUT_ARGS=(-ch_layout stereo)
+                ;;
+            6)
+                ABITRATE=384000
+                CHANNEL_LAYOUT_ARGS=(-ch_layout 5.1)
+                ;;
+            8)
+                ABITRATE=512000
+                CHANNEL_LAYOUT_ARGS=(-ch_layout 7.1)
+                ;;
+            *)
+                ABITRATE=192000
+                CHANNEL_LAYOUT_ARGS=(-ac 2 -ch_layout stereo)
+                AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown} -> 2 (forced)"
+                ;;
+        esac
+
+        AUDIO_ARGS=(
+            -c:a aac
+            -b:a "$ABITRATE"
+            "${CHANNEL_LAYOUT_ARGS[@]}"
+            -af "aresample=async=1"
+        )
+        AUDIO_INFO="${ACODEC:-unknown}->aac ${ABITRATE}bps ${AUDIO_CHANNELS_DISPLAY}ch"
     fi
-
-    CHANNEL_LAYOUT_ARGS=()
-    AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown}"
-    case "$ACHANNELS" in
-        1) CHANNEL_LAYOUT_ARGS=(-ch_layout mono) ;;
-        2) CHANNEL_LAYOUT_ARGS=(-ch_layout stereo) ;;
-        6) CHANNEL_LAYOUT_ARGS=(-ch_layout 5.1) ;;
-        8) CHANNEL_LAYOUT_ARGS=(-ch_layout 7.1) ;;
-        *)
-            CHANNEL_LAYOUT_ARGS=(-ac 2 -ch_layout stereo)
-            AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown} -> 2 (forced)"
-            ;;
-    esac
-
-    AUDIO_ARGS=(
-        -c:a aac
-        -b:a "$ABITRATE"
-        "${CHANNEL_LAYOUT_ARGS[@]}"
-        -af "aresample=async=1"
-    )
-    AUDIO_INFO="${ABITRATE}bps ${AUDIO_CHANNELS_DISPLAY}ch"
 fi
 
 BASE_VBITRATE=8000000
