@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v4"
+VERSION="render-node-v5"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -66,7 +66,6 @@ get_hw_fingerprint() {
     local fp="script=$VERSION;"
     local dev node vendor device
 
-    # Linux DRI devices exposed to this process/container
     for dev in /dev/dri/renderD*; do
         [[ -e "$dev" ]] || continue
         node="${dev##*/}"
@@ -79,9 +78,7 @@ get_hw_fingerprint() {
         fp+="selected:dri=${DRI_DEVICE:-none},vaapi=${VAAPI_DEVICE:-none},qsv=${QSV_DEVICE:-none};"
     fi
 
-    # NVIDIA
     [[ -e /dev/nvidia0 ]] && fp+="nvidia:$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader 2>/dev/null | head -1 | tr ' ' '_');"
-    # macOS
     [[ "$(uname -s)" == "Darwin" ]] && fp+="darwin:$(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chip' | head -1 | tr ' ' '_');"
     echo "$fp"
 }
@@ -108,10 +105,8 @@ log_bench_failure() {
     tail -n 8 <<<"$output" | sed "s/^/$LOG_PREFIX   /" >&2
 }
 
-# Quick encoder benchmark - returns "speed:lp_speed" (e.g., "4.0:3.5" or "5.2:" if no lp)
-# When the downloaded probe sample is available, benchmark a real compressed
-# HEVC 10-bit decode -> filter/convert -> encode pipeline. Synthetic input is
-# retained only as a fallback when the sample cannot be downloaded.
+# Quick encoder benchmark - returns "speed:lp_speed".
+# Uses a real compressed HEVC 10-bit sample when available.
 bench_encoder() {
     local encoder="$1"
     local pix_fmt="nv12"
@@ -124,8 +119,6 @@ bench_encoder() {
 
     [[ -f "$PROBE_SAMPLE" ]] && use_sample="true"
 
-    # Match production encoder settings so the benchmark does not artificially
-    # favor software with a faster preset than normal runtime uses.
     local prod_opts="-b:v 8M -maxrate 10M -bufsize 16M -g 30 -bf 2"
     local lp_prod_opts="-b:v 8M -maxrate 10M -bufsize 16M -g 30 -bf 0 -look_ahead 0"
 
@@ -344,7 +337,7 @@ test_10bit_decode() {
             ;;
         nvenc) hwaccel_args=(-hwaccel cuda -hwaccel_output_format cuda) ;;
         videotoolbox) hwaccel_args=(-hwaccel videotoolbox) ;;
-        *) return 1 ;;  # software doesn't need this test
+        *) return 1 ;;
     esac
 
     timeout 5s ffmpeg -nostdin -hide_banner -v error \
@@ -358,7 +351,6 @@ probe_capabilities() {
     local encoders_list
     encoders_list=$(ffmpeg -hide_banner -encoders 2>/dev/null || true)
 
-    # Try to get real sample for better probe accuracy
     ensure_probe_sample || true
     if [[ -f "$PROBE_SAMPLE" ]]; then
         echo "$LOG_PREFIX Benchmark source: $(basename "$PROBE_SAMPLE") (real decode/transcode)" >&2
@@ -366,13 +358,11 @@ probe_capabilities() {
         echo "$LOG_PREFIX Benchmark source: synthetic lavfi fallback" >&2
     fi
 
-    # Test matrix: accel -> codecs
     local accels_to_test=()
     local can_decode_10bit=""
     local can_encode_10bit=""
     local vendor=""
 
-    # Detect what to test based on hardware actually exposed in /dev.
     if [[ "$(uname -s)" == "Darwin" ]]; then
         accels_to_test+=("videotoolbox")
     else
@@ -390,7 +380,6 @@ probe_capabilities() {
             esac
         fi
 
-        # V4L2 M2M (ARM: Raspberry Pi, Rockchip, etc.)
         for n in /sys/class/video4linux/video*/name; do
             if [[ -r "$n" ]] && grep -qiE 'm2m|codec' "$n" 2>/dev/null; then
                 accels_to_test+=("v4l2m2m")
@@ -406,7 +395,6 @@ probe_capabilities() {
     local best_low_power="0"
 
     for accel in "${accels_to_test[@]}"; do
-        # Test 10-bit decode for this accelerator
         if [[ "$accel" != "software" ]] && test_10bit_decode "$accel"; then
             can_decode_10bit+="${accel}=1;"
         fi
@@ -419,7 +407,6 @@ probe_capabilities() {
                 encoder="${codec}_${accel}"
             fi
 
-            # Skip if encoder not compiled in
             grep -qw "$encoder" <<<"$encoders_list" || continue
 
             echo "$LOG_PREFIX Probing $encoder..." >&2
@@ -430,15 +417,12 @@ probe_capabilities() {
             lp_speed="${bench_result##*:}"
 
             if [[ -n "$speed" && "$speed" != "0" ]]; then
-                # Store normal mode result
                 results+="${encoder}=${speed}x;"
 
-                # Store low power result if tested
                 if [[ -n "$lp_speed" && "$lp_speed" != "0" ]]; then
                     results+="${encoder}(lp)=${lp_speed}x;"
                 fi
 
-                # Determine which mode is faster for this encoder
                 if [[ -n "$lp_speed" ]] && awk "BEGIN {exit !($lp_speed > $speed)}"; then
                     best_of_two="$lp_speed"
                     use_lp="1"
@@ -447,7 +431,6 @@ probe_capabilities() {
                     use_lp="0"
                 fi
 
-                # Compare to overall best (use awk for float comparison)
                 if awk "BEGIN {exit !($best_of_two > $best_speed)}"; then
                     best_speed="$best_of_two"
                     best_accel="$accel"
@@ -455,7 +438,6 @@ probe_capabilities() {
                     best_low_power="$use_lp"
                 fi
 
-                # Test 10-bit HEVC encode per accelerator.
                 if [[ "$codec" == "hevc" && "$accel" != "software" ]]; then
                     if test_encoder "$encoder" "true"; then
                         results+="${encoder}_10bit=1;"
@@ -483,22 +465,16 @@ probe_capabilities() {
     echo "ENCODERS='$results'"
 }
 
-# Load cached capabilities (returns 1 if cache invalid)
 load_cache() {
     [[ -f "$CACHE_FILE" ]] || return 1
-
-    # Source first to get variables
     source "$CACHE_FILE" || return 1
 
-    # Check fingerprint matches
     local current_fp
     current_fp=$(get_hw_fingerprint)
     [[ "$HW_FINGERPRINT" == "$current_fp" ]] || return 1
-
     return 0
 }
 
-# Save capabilities to cache
 save_cache() {
     {
         echo "# ffmpeg-smart capability cache"
@@ -515,28 +491,22 @@ accel_has_capability() {
     [[ "$caps" == *"${accel}=1;"* ]]
 }
 
-# Parse args
 AGENT=""
 URL=""
-VCODEC_OUT=""  # empty = use cached best
-ALLOW_10BIT="" # empty = use selected accel capability
-ALLOW_HDR=""   # empty = use selected accel capability + HEVC output
+VCODEC_OUT=""
+ALLOW_10BIT=""
+ALLOW_HDR=""
 RECACHE=false
-
-# Placeholder - will be set from cache or detect_accel fallback
 ACCEL="__auto__"
 
-# Fallback accel detection (only used if cache fails)
 detect_accel() {
-    # macOS - VideoToolbox
     if [[ "$(uname -s)" == "Darwin" ]]; then
         echo "videotoolbox"; return
     fi
-    # NVIDIA
     if [[ -e /dev/nvidia0 ]]; then
         echo "nvenc"; return
     fi
-    # Check the selected, actually exposed DRI device for Intel/AMD.
+
     local vendor=""
     if [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]]; then
         vendor="$(get_dri_vendor "$VAAPI_DEVICE" || true)"
@@ -548,11 +518,11 @@ detect_accel() {
         vendor="$(get_dri_vendor "$QSV_DEVICE" || true)"
         [[ "$vendor" == "0x8086" ]] && { echo "qsv"; return; }
     fi
-    # V4L2 M2M (ARM: Raspberry Pi, Rockchip, etc.)
+
     for n in /sys/class/video4linux/video*/name; do
         [[ -r "$n" ]] && grep -qiE 'm2m|codec' "$n" && echo "v4l2m2m" && return
     done
-    # Fallback to VAAPI if an exposed DRI render node exists, else software
+
     if [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]]; then
         echo "vaapi"
     else
@@ -573,7 +543,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Initialize capabilities from cache (or probe if needed)
 if [[ "$RECACHE" == "true" ]] || ! load_cache 2>/dev/null; then
     save_cache
     echo "$LOG_PREFIX v$VERSION | Probed: accel=$BEST_ACCEL codec=$BEST_CODEC 10bit=$SUPPORTS_10BIT_ENCODE hdr=$SUPPORTS_10BIT_ENCODE" >&2
@@ -581,15 +550,12 @@ else
     echo "$LOG_PREFIX v$VERSION | Cached: accel=$BEST_ACCEL codec=$BEST_CODEC 10bit=$SUPPORTS_10BIT_ENCODE hdr=$SUPPORTS_10BIT_ENCODE" >&2
 fi
 
-# Apply cached defaults if not overridden by args
 [[ -z "$VCODEC_OUT" ]] && VCODEC_OUT="${BEST_CODEC:-h264}"
 if [[ "$ACCEL" == "__auto__" ]]; then
     ACCEL="${BEST_ACCEL:-}"
     [[ -z "$ACCEL" ]] && ACCEL=$(detect_accel)
 fi
 
-# Capabilities must follow the accelerator actually selected at runtime, including
-# an explicit -accel override, rather than whichever accelerator won the benchmark.
 SELECTED_SUPPORTS_10BIT_DECODE=false
 SELECTED_SUPPORTS_10BIT_ENCODE=false
 accel_has_capability "${DECODE_10BIT:-}" "$ACCEL" && SELECTED_SUPPORTS_10BIT_DECODE=true
@@ -604,16 +570,13 @@ if [[ -z "$ALLOW_HDR" ]]; then
     fi
 fi
 
-# Validate
 if [[ -z "$URL" ]]; then
     echo "$LOG_PREFIX ERROR: No stream URL provided" >&2
     exit 1
 fi
 
-# Cache encoder list for codec selection
 ENCODERS="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
 
-# Validate accel type
 case "$ACCEL" in
     qsv|vaapi|nvenc|v4l2m2m|videotoolbox|software) ;;
     *)
@@ -622,7 +585,6 @@ case "$ACCEL" in
         ;;
 esac
 
-# Validate the selected render node for accelerators that require one.
 case "$ACCEL" in
     qsv)
         if [[ -z "$QSV_DEVICE" || ! -e "$QSV_DEVICE" ]]; then
@@ -646,7 +608,6 @@ case "$VCODEC_OUT" in
         ;;
 esac
 
-# Set hwaccel args (called early for decoding)
 set_hwaccel_args() {
     case "$ACCEL" in
         qsv)
@@ -673,15 +634,12 @@ set_hwaccel_args() {
     esac
 }
 
-# Set encoder-specific options (called after encoder selection)
 set_encoder_opts() {
-    # Default: enable B-frames for better compression
     BF_ARGS="-bf 2"
 
     case "$ACCEL" in
         qsv)
             if [[ "${BEST_LOW_POWER:-0}" == "1" ]]; then
-                # Low power (VDEnc): no preset, no B-frames, no look-ahead
                 ACCEL_OPTS="-low_power true -look_ahead 0"
                 BF_ARGS="-bf 0"
             else
@@ -692,7 +650,7 @@ set_encoder_opts() {
             ACCEL_OPTS="-rc_mode VBR"
             if [[ "${BEST_LOW_POWER:-0}" == "1" ]]; then
                 ACCEL_OPTS+=" -low_power 1"
-                BF_ARGS="-bf 0"  # Low power mode doesn't support B-frames
+                BF_ARGS="-bf 0"
             fi
             ;;
         nvenc)
@@ -710,7 +668,6 @@ set_encoder_opts() {
     esac
 }
 
-# Build network-specific args (only for HTTP/HTTPS)
 if [[ "$URL" =~ ^https?:// ]]; then
     [[ -n "$AGENT" ]] && UA_ARGS=(-user_agent "$AGENT") || UA_ARGS=()
     NET_ARGS=(-reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 30 -rw_timeout 15000000)
@@ -719,13 +676,11 @@ else
     NET_ARGS=()
 fi
 
-# Probe stream
 PROBE=$(ffprobe "${UA_ARGS[@]}" -v quiet -print_format json -show_streams "$URL" 2>&1) || {
     echo "$LOG_PREFIX ERROR: ffprobe failed - cannot access stream" >&2
     exit 1
 }
 
-# Parse streams by codec_type
 VCODEC=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .codec_name' | head -n1)
 FPS_FRAC=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .r_frame_rate' | head -n1)
 PIX_FMT=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .pix_fmt // empty' | head -n1)
@@ -734,11 +689,10 @@ WIDTH=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .widt
 HEIGHT=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="video") | .height // 0' | head -n1)
 ABITRATE_RAW=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .bit_rate // empty' | head -n1)
 ACHANNELS=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .channels // empty' | head -n1)
+AUDIO_STREAM_COUNT=$(echo "$PROBE" | jq '[.streams[] | select(.codec_type=="audio")] | length')
+HAS_AUDIO=false
+[[ "$AUDIO_STREAM_COUNT" -gt 0 ]] && HAS_AUDIO=true
 
-# Passthrough conditions:
-# - 4K+ resolution (no point re-encoding)
-# - 10-bit content when selected accelerator can't encode 10-bit HEVC
-# - HDR content when output isn't capable of 10-bit HEVC
 PASSTHROUGH=""
 IS_HDR=false
 [[ "$COLOR_TRANSFER" == "smpte2084" || "$COLOR_TRANSFER" == "arib-std-b67" ]] && IS_HDR=true
@@ -751,13 +705,11 @@ elif [[ "$IS_HDR" == "true" && "$ALLOW_HDR" == "false" ]]; then
     PASSTHROUGH="HDR"
 fi
 
-# Validate video stream
 if [[ -z "$VCODEC" || "$VCODEC" == "null" ]]; then
     echo "$LOG_PREFIX ERROR: No video stream found" >&2
     exit 1
 fi
 
-# Select encoder based on VCODEC_OUT family and acceleration
 if [[ "$ACCEL" == "software" ]]; then
     if [[ "$VCODEC_OUT" == "hevc" ]]; then
         ENCODER="libx265"
@@ -779,15 +731,12 @@ else
     fi
 fi
 
-# Set hwaccel args and encoder-specific options
 set_hwaccel_args
 set_encoder_opts
 
-# Handle video filter/profile requirements.
 VF_ARGS=""
 PROFILE_ARGS=""
 if [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "h264" ]]; then
-    # H264 output is 8-bit; convert 10-bit sources to NV12.
     case "$ACCEL" in
         nvenc) VF_ARGS="-vf scale_cuda=format=nv12" ;;
         vaapi) VF_ARGS="-vf scale_vaapi=format=nv12" ;;
@@ -795,8 +744,6 @@ if [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "h264" ]]; then
         *) VF_ARGS="-pix_fmt yuv420p" ;;
     esac
 elif [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "true" ]]; then
-    # Preserve a 10-bit pipeline for HEVC when the selected accelerator proved
-    # Main10/P010 encode capability during probing.
     case "$ACCEL" in
         vaapi) VF_ARGS="-vf scale_vaapi=format=p010le" ;;
         qsv)
@@ -806,49 +753,57 @@ elif [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "tr
         *) VF_ARGS="-pix_fmt yuv420p10le" ;;
     esac
 elif [[ "$ACCEL" == "vaapi" || "$ACCEL" == "qsv" ]]; then
-    # Normal 8-bit hardware encode path.
     case "$ACCEL" in
         vaapi) VF_ARGS="-vf format=nv12|vaapi,hwupload,scale_vaapi=format=nv12" ;;
         qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
     esac
 fi
 
-# HDR color metadata passthrough (HEVC/Main10 path only)
 HDR_ARGS=""
 if [[ "$IS_HDR" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_HDR" == "true" ]]; then
     HDR_ARGS="-color_primaries bt2020 -color_trc $COLOR_TRANSFER -colorspace bt2020nc"
 fi
 
-# Validate audio bitrate (reject sample rates like 44100/48000)
-# Audio bitrate: use source if valid, else 64kbps per channel
-if [[ -n "$ABITRATE_RAW" ]] && [[ "$ABITRATE_RAW" =~ ^[0-9]+$ ]] && [[ "$ABITRATE_RAW" -ge 60000 ]] && [[ "$ABITRATE_RAW" -le 500000 ]]; then
-    ABITRATE="$ABITRATE_RAW"
-else
-    ACHANNELS_NUM=${ACHANNELS:-2}
-    [[ "$ACHANNELS_NUM" =~ ^[0-9]+$ ]] || ACHANNELS_NUM=2
-    ABITRATE=$((64000 * ACHANNELS_NUM))
+# Build audio arguments only when an audio stream actually exists.
+AUDIO_ARGS=()
+AUDIO_INFO="none"
+if [[ "$HAS_AUDIO" == "true" ]]; then
+    if [[ -n "$ABITRATE_RAW" ]] && [[ "$ABITRATE_RAW" =~ ^[0-9]+$ ]] && [[ "$ABITRATE_RAW" -ge 60000 ]] && [[ "$ABITRATE_RAW" -le 500000 ]]; then
+        ABITRATE="$ABITRATE_RAW"
+    else
+        ACHANNELS_NUM=${ACHANNELS:-2}
+        [[ "$ACHANNELS_NUM" =~ ^[0-9]+$ ]] || ACHANNELS_NUM=2
+        ABITRATE=$((64000 * ACHANNELS_NUM))
+    fi
+
+    CHANNEL_LAYOUT_ARGS=()
+    AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown}"
+    case "$ACHANNELS" in
+        1) CHANNEL_LAYOUT_ARGS=(-ch_layout mono) ;;
+        2) CHANNEL_LAYOUT_ARGS=(-ch_layout stereo) ;;
+        6) CHANNEL_LAYOUT_ARGS=(-ch_layout 5.1) ;;
+        8) CHANNEL_LAYOUT_ARGS=(-ch_layout 7.1) ;;
+        *)
+            CHANNEL_LAYOUT_ARGS=(-ac 2 -ch_layout stereo)
+            AUDIO_CHANNELS_DISPLAY="${ACHANNELS:-unknown} -> 2 (forced)"
+            ;;
+    esac
+
+    AUDIO_ARGS=(
+        -c:a aac
+        -b:a "$ABITRATE"
+        "${CHANNEL_LAYOUT_ARGS[@]}"
+        -af "aresample=async=1"
+    )
+    AUDIO_INFO="${ABITRATE}bps ${AUDIO_CHANNELS_DISPLAY}ch"
 fi
 
-# Set channel layout based on channel count
-case "$ACHANNELS" in
-    1) CHANNEL_LAYOUT="-ch_layout mono" ;;
-    2) CHANNEL_LAYOUT="-ch_layout stereo" ;;
-    6) CHANNEL_LAYOUT="-ch_layout 5.1" ;;
-    8) CHANNEL_LAYOUT="-ch_layout 7.1" ;;
-    *)
-        CHANNEL_LAYOUT="-ac 2 -ch_layout stereo"
-        ACHANNELS="${ACHANNELS:-0} -> 2 (forced)"
-        ;;
-esac
-
-# Video bitrate scaled quadratically by pixels (8Mbps base at 1080p, 2Mbps floor)
 BASE_VBITRATE=8000000
 VBITRATE=$((BASE_VBITRATE * WIDTH * HEIGHT / 1920 / 1080))
 [[ $VBITRATE -lt 2000000 ]] && VBITRATE=2000000
-MAXRATE=$((VBITRATE * 125 / 100))  # 1.25x
+MAXRATE=$((VBITRATE * 125 / 100))
 BUFSIZE=$((VBITRATE * 2))
 
-# Calculate GOP with rounding
 if [[ "$FPS_FRAC" =~ ^([0-9]+)/([0-9]+)$ ]]; then
     NUM=${BASH_REMATCH[1]}
     DEN=${BASH_REMATCH[2]}
@@ -868,7 +823,7 @@ else
 fi
 
 if [[ -n "$PASSTHROUGH" ]]; then
-    echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> passthrough (${PASSTHROUGH}) audio=${ABITRATE}bps ${ACHANNELS}ch" >&2
+    echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> passthrough (${PASSTHROUGH}) audio=${AUDIO_INFO}" >&2
     exec ffmpeg \
         "${UA_ARGS[@]}" \
         "${NET_ARGS[@]}" \
@@ -878,10 +833,7 @@ if [[ -n "$PASSTHROUGH" ]]; then
         -map 0:v:0 \
         -map 0:a:0? \
         -c:v copy \
-        -c:a aac \
-        -b:a "$ABITRATE" \
-        $CHANNEL_LAYOUT \
-        -af "aresample=async=1" \
+        "${AUDIO_ARGS[@]}" \
         -avoid_negative_ts make_zero \
         -start_at_zero \
         -mpegts_copyts 0 \
@@ -898,7 +850,7 @@ case "$ACCEL" in
     vaapi) DEVICE_INFO=" device=$VAAPI_DEVICE" ;;
 esac
 
-echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${ABITRATE}bps ${ACHANNELS}ch accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT}" >&2
+echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${AUDIO_INFO} accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT}" >&2
 
 exec ffmpeg \
     "${UA_ARGS[@]}" \
@@ -923,10 +875,7 @@ exec ffmpeg \
     -fps_mode cfr \
     -r "$FPS_OUT" \
     $TAG_ARGS \
-    -c:a aac \
-    -b:a "$ABITRATE" \
-    $CHANNEL_LAYOUT \
-    -af "aresample=async=1" \
+    "${AUDIO_ARGS[@]}" \
     -avoid_negative_ts make_zero \
     -start_at_zero \
     -mpegts_copyts 0 \
