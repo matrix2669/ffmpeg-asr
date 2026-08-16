@@ -39,7 +39,7 @@ The normalized MPEG-TS stream is written to stdout.
 | `-10bit` | auto | Enable 10-bit output; auto follows the selected accelerator's proven capability |
 | `-hdr` | auto | Enable HDR output; auto follows the selected HEVC/10-bit capability |
 | `-maxres` | unset | Maximum vertical resolution, for example `720`; lower-resolution sources are never upscaled |
-| `-maxbr` | unset | Maximum video bitrate, for example `2M`, `2000k`, or `2000000` |
+| `-maxbr` | unset | Maximum video bitrate, for example `2M`, `2000k`, or `2000000`; transcodes use constrained VBR below this ceiling |
 | `-maxbitrate` | unset | Alias for `-maxbr` |
 | `-maxchan` | unset | Maximum number of audio channels, for example `2`; audio is never upmixed |
 | `-sdr` | unset | Require SDR output; HDR sources are tone-mapped to BT.709 SDR |
@@ -103,6 +103,8 @@ Each limit is conditional:
 - SDR video is not tone-mapped.
 - AAC within the channel limit is copied unchanged.
 
+When a transcode is required with `-maxbr 2M`, the normal 720p target is capped to 85% of the ceiling (1.7 Mbps) while `-maxrate` remains 2 Mbps, leaving headroom for constrained-VBR peaks.
+
 If multiple constraints require a transcode, they are handled in the same video/audio pipeline rather than causing multiple generations.
 
 ## Maximum resolution
@@ -128,7 +130,14 @@ Accepted bitrate formats include raw bits per second and `k`, `M`, or `G` suffix
 
 When FFprobe reports a source video bitrate, video can be copied if that bitrate is already within the limit and all other policy checks pass. Many live MPEG-TS sources do not publish a reliable video bitrate. In that case the script transcodes when a maximum bitrate is requested, because stream copy cannot guarantee the requested ceiling.
 
-During a bitrate-limited transcode, the requested maximum becomes FFmpeg's `-maxrate` and the VBV buffer is set to twice that value.
+During a bitrate-limited transcode, the requested maximum becomes FFmpeg's `-maxrate`. The target `-b:v` is the lower of the normal resolution-derived target or 85% of the requested maximum, and the VBV buffer is twice the maximum. This provides constrained-VBR headroom without increasing the normal target for lower-resolution streams.
+
+For example:
+
+```text
+-maxbr 2M  -> target up to 1.7M, maxrate 2M, bufsize 4M
+-maxbr 4M  -> target up to 3.4M, maxrate 4M, bufsize 8M
+```
 
 ## Maximum audio channels
 
