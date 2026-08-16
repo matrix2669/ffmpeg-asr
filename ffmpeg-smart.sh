@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v3"
+VERSION="render-node-v4"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -60,10 +60,10 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 fi
 
 # Get hardware fingerprint. Only include DRI render nodes that actually exist
-# in /dev, and include the selected devices so cache invalidates when mappings
-# or explicit device overrides change.
+# in /dev, and include the selected devices so cache invalidates when mappings,
+# explicit device overrides, or this script version changes.
 get_hw_fingerprint() {
-    local fp=""
+    local fp="script=$VERSION;"
     local dev node vendor device
 
     # Linux DRI devices exposed to this process/container
@@ -83,8 +83,6 @@ get_hw_fingerprint() {
     [[ -e /dev/nvidia0 ]] && fp+="nvidia:$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader 2>/dev/null | head -1 | tr ' ' '_');"
     # macOS
     [[ "$(uname -s)" == "Darwin" ]] && fp+="darwin:$(system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chip' | head -1 | tr ' ' '_');"
-    # Fallback
-    [[ -z "$fp" ]] && fp="software"
     echo "$fp"
 }
 
@@ -246,7 +244,7 @@ bench_encoder() {
     echo "${speed:-0}:${lp_speed}"
 }
 
-# Quick encoder test - returns 0 if works (used for 10-bit capability check)
+# Quick encoder test - returns 0 if works (used for 10-bit HEVC capability check)
 test_encoder() {
     local encoder="$1"
     local test_10bit="${2:-false}"
@@ -257,22 +255,42 @@ test_encoder() {
     case "$encoder" in
         *_qsv)
             [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || return 1
-            timeout 10s ffmpeg -nostdin -hide_banner -v error \
-                -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
-                -filter_hw_device qsv \
-                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
-                -t 0.2 \
-                -vf "hwupload=extra_hw_frames=16" \
-                -c:v "$encoder" -f null - 2>/dev/null
+            if [[ "$test_10bit" == "true" && -f "$PROBE_SAMPLE" ]]; then
+                timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                    -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
+                    -filter_hw_device qsv \
+                    -hwaccel qsv -hwaccel_device qsv -hwaccel_output_format qsv \
+                    -i "$PROBE_SAMPLE" -t 0.5 \
+                    -vf "scale_qsv=format=p010le" \
+                    -c:v "$encoder" -profile:v main10 -f null - 2>/dev/null
+            else
+                local qsv_profile=()
+                [[ "$test_10bit" == "true" ]] && qsv_profile=(-profile:v main10)
+                timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                    -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
+                    -filter_hw_device qsv \
+                    -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
+                    -t 0.2 \
+                    -vf "hwupload=extra_hw_frames=16" \
+                    -c:v "$encoder" "${qsv_profile[@]}" -f null - 2>/dev/null
+            fi
             ;;
         *_vaapi)
             [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || return 1
-            timeout 10s ffmpeg -nostdin -hide_banner -v error \
-                -vaapi_device "$VAAPI_DEVICE" \
-                -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
-                -t 0.2 \
-                -vf "hwupload,scale_vaapi=format=$pix_fmt" \
-                -c:v "$encoder" -f null - 2>/dev/null
+            if [[ "$test_10bit" == "true" && -f "$PROBE_SAMPLE" ]]; then
+                timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                    -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE" \
+                    -i "$PROBE_SAMPLE" -t 0.5 \
+                    -vf "scale_vaapi=format=p010le" \
+                    -c:v "$encoder" -f null - 2>/dev/null
+            else
+                timeout 10s ffmpeg -nostdin -hide_banner -v error \
+                    -vaapi_device "$VAAPI_DEVICE" \
+                    -f lavfi -i "color=black:size=$size:rate=30,format=$pix_fmt" \
+                    -t 0.2 \
+                    -vf "hwupload,scale_vaapi=format=$pix_fmt" \
+                    -c:v "$encoder" -f null - 2>/dev/null
+            fi
             ;;
         *_nvenc)
             timeout 10s ffmpeg -nostdin -hide_banner -v error \
@@ -351,6 +369,7 @@ probe_capabilities() {
     # Test matrix: accel -> codecs
     local accels_to_test=()
     local can_decode_10bit=""
+    local can_encode_10bit=""
     local vendor=""
 
     # Detect what to test based on hardware actually exposed in /dev.
@@ -385,14 +404,11 @@ probe_capabilities() {
     local best_codec="h264"
     local best_speed="0"
     local best_low_power="0"
-    local supports_10bit_decode="false"
-    local supports_10bit_encode="false"
 
     for accel in "${accels_to_test[@]}"; do
         # Test 10-bit decode for this accelerator
         if [[ "$accel" != "software" ]] && test_10bit_decode "$accel"; then
             can_decode_10bit+="${accel}=1;"
-            supports_10bit_decode="true"
         fi
 
         for codec in h264 hevc; do
@@ -439,11 +455,11 @@ probe_capabilities() {
                     best_low_power="$use_lp"
                 fi
 
-                # Test 10-bit encode for HEVC (skip QSV - known broken)
-                if [[ "$codec" == "hevc" && "$accel" != "software" && "$accel" != "qsv" ]]; then
+                # Test 10-bit HEVC encode per accelerator.
+                if [[ "$codec" == "hevc" && "$accel" != "software" ]]; then
                     if test_encoder "$encoder" "true"; then
                         results+="${encoder}_10bit=1;"
-                        supports_10bit_encode="true"
+                        can_encode_10bit+="${accel}=1;"
                     fi
                 fi
             else
@@ -452,12 +468,18 @@ probe_capabilities() {
         done
     done
 
+    local supports_10bit_decode="false"
+    local supports_10bit_encode="false"
+    [[ "$can_decode_10bit" == *"${best_accel}=1;"* ]] && supports_10bit_decode="true"
+    [[ "$can_encode_10bit" == *"${best_accel}=1;"* ]] && supports_10bit_encode="true"
+
     echo "BEST_ACCEL='$best_accel'"
     echo "BEST_CODEC='$best_codec'"
     echo "BEST_LOW_POWER='$best_low_power'"
     echo "SUPPORTS_10BIT_DECODE='$supports_10bit_decode'"
     echo "SUPPORTS_10BIT_ENCODE='$supports_10bit_encode'"
     echo "DECODE_10BIT='$can_decode_10bit'"
+    echo "ENCODE_10BIT='$can_encode_10bit'"
     echo "ENCODERS='$results'"
 }
 
@@ -487,12 +509,18 @@ save_cache() {
     source "$CACHE_FILE"
 }
 
+accel_has_capability() {
+    local caps="$1"
+    local accel="$2"
+    [[ "$caps" == *"${accel}=1;"* ]]
+}
+
 # Parse args
 AGENT=""
 URL=""
 VCODEC_OUT=""  # empty = use cached best
-ALLOW_10BIT="" # empty = use cached value
-ALLOW_HDR=""   # empty = use cached value
+ALLOW_10BIT="" # empty = use selected accel capability
+ALLOW_HDR=""   # empty = use selected accel capability + HEVC output
 RECACHE=false
 
 # Placeholder - will be set from cache or detect_accel fallback
@@ -555,11 +583,25 @@ fi
 
 # Apply cached defaults if not overridden by args
 [[ -z "$VCODEC_OUT" ]] && VCODEC_OUT="${BEST_CODEC:-h264}"
-[[ -z "$ALLOW_10BIT" || "$ALLOW_10BIT" == "" ]] && ALLOW_10BIT="${SUPPORTS_10BIT_ENCODE:-false}"
-[[ -z "$ALLOW_HDR" || "$ALLOW_HDR" == "" ]] && ALLOW_HDR="${SUPPORTS_10BIT_ENCODE:-false}"  # HDR requires 10-bit encode
 if [[ "$ACCEL" == "__auto__" ]]; then
     ACCEL="${BEST_ACCEL:-}"
     [[ -z "$ACCEL" ]] && ACCEL=$(detect_accel)
+fi
+
+# Capabilities must follow the accelerator actually selected at runtime, including
+# an explicit -accel override, rather than whichever accelerator won the benchmark.
+SELECTED_SUPPORTS_10BIT_DECODE=false
+SELECTED_SUPPORTS_10BIT_ENCODE=false
+accel_has_capability "${DECODE_10BIT:-}" "$ACCEL" && SELECTED_SUPPORTS_10BIT_DECODE=true
+accel_has_capability "${ENCODE_10BIT:-}" "$ACCEL" && SELECTED_SUPPORTS_10BIT_ENCODE=true
+
+[[ -z "$ALLOW_10BIT" ]] && ALLOW_10BIT="$SELECTED_SUPPORTS_10BIT_ENCODE"
+if [[ -z "$ALLOW_HDR" ]]; then
+    if [[ "$VCODEC_OUT" == "hevc" && "$SELECTED_SUPPORTS_10BIT_ENCODE" == "true" ]]; then
+        ALLOW_HDR=true
+    else
+        ALLOW_HDR=false
+    fi
 fi
 
 # Validate
@@ -695,8 +737,8 @@ ACHANNELS=$(echo "$PROBE" | jq -r '.streams[] | select(.codec_type=="audio") | .
 
 # Passthrough conditions:
 # - 4K+ resolution (no point re-encoding)
-# - 10-bit content when can't encode 10-bit
-# - HDR content when can't encode HDR (requires 10-bit HEVC)
+# - 10-bit content when selected accelerator can't encode 10-bit HEVC
+# - HDR content when output isn't capable of 10-bit HEVC
 PASSTHROUGH=""
 IS_HDR=false
 [[ "$COLOR_TRANSFER" == "smpte2084" || "$COLOR_TRANSFER" == "arib-std-b67" ]] && IS_HDR=true
@@ -741,31 +783,39 @@ fi
 set_hwaccel_args
 set_encoder_opts
 
-# Handle video filter requirements:
-# 1. 10-bit input for H264 output needs conversion to 8-bit
-# 2. Cross-codec transcode with VAAPI needs scale_vaapi for frame format compatibility
+# Handle video filter/profile requirements.
 VF_ARGS=""
+PROFILE_ARGS=""
 if [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "h264" ]]; then
-    # H264 can't encode 10-bit, must convert to 8-bit
+    # H264 output is 8-bit; convert 10-bit sources to NV12.
     case "$ACCEL" in
         nvenc) VF_ARGS="-vf scale_cuda=format=nv12" ;;
         vaapi) VF_ARGS="-vf scale_vaapi=format=nv12" ;;
         qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
         *) VF_ARGS="-pix_fmt yuv420p" ;;
     esac
+elif [[ "$PIX_FMT" == *"10"* && "$VCODEC_OUT" == "hevc" && "$ALLOW_10BIT" == "true" ]]; then
+    # Preserve a 10-bit pipeline for HEVC when the selected accelerator proved
+    # Main10/P010 encode capability during probing.
+    case "$ACCEL" in
+        vaapi) VF_ARGS="-vf scale_vaapi=format=p010le" ;;
+        qsv)
+            VF_ARGS="-vf scale_qsv=format=p010le"
+            PROFILE_ARGS="-profile:v main10"
+            ;;
+        *) VF_ARGS="-pix_fmt yuv420p10le" ;;
+    esac
 elif [[ "$ACCEL" == "vaapi" || "$ACCEL" == "qsv" ]]; then
-    # VAAPI/QSV encode needs format conversion filter
-    # hwupload passthrough handles both hw decode (pass through) and sw decode fallback (upload)
+    # Normal 8-bit hardware encode path.
     case "$ACCEL" in
         vaapi) VF_ARGS="-vf format=nv12|vaapi,hwupload,scale_vaapi=format=nv12" ;;
         qsv) VF_ARGS="-vf scale_qsv=format=nv12" ;;
     esac
 fi
 
-# HDR metadata passthrough (only for HEVC, H264 doesn't support HDR)
+# HDR color metadata passthrough (HEVC/Main10 path only)
 HDR_ARGS=""
 if [[ "$IS_HDR" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_HDR" == "true" ]]; then
-    # Preserve HDR color metadata
     HDR_ARGS="-color_primaries bt2020 -color_trc $COLOR_TRANSFER -colorspace bt2020nc"
 fi
 
@@ -848,7 +898,7 @@ case "$ACCEL" in
     vaapi) DEVICE_INFO=" device=$VAAPI_DEVICE" ;;
 esac
 
-echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${ABITRATE}bps ${ACHANNELS}ch accel=${ACCEL}${DEVICE_INFO}" >&2
+echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${ABITRATE}bps ${ACHANNELS}ch accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT}" >&2
 
 exec ffmpeg \
     "${UA_ARGS[@]}" \
@@ -862,6 +912,7 @@ exec ffmpeg \
     -map 0:a:0? \
     -c:v "$ENCODER" \
     $VF_ARGS \
+    $PROFILE_ARGS \
     $HDR_ARGS \
     -b:v "$VBITRATE" \
     -maxrate "$MAXRATE" \
