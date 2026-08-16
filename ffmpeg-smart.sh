@@ -4,20 +4,81 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="841fd67"  # git commit
+VERSION="render-node-v1"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
 
-# Get hardware fingerprint (GPU vendor:device)
+# DRI device selection. DRI_DEVICE can override both VAAPI and QSV;
+# VAAPI_DEVICE and QSV_DEVICE can override them independently.
+DRI_DEVICE="${DRI_DEVICE:-}"
+VAAPI_DEVICE="${VAAPI_DEVICE:-}"
+QSV_DEVICE="${QSV_DEVICE:-}"
+
+get_dri_vendor() {
+    local dev="$1"
+    local node="${dev##*/}"
+    local vendor_file="/sys/class/drm/$node/device/vendor"
+
+    [[ -r "$vendor_file" ]] || return 1
+    cat "$vendor_file" 2>/dev/null
+}
+
+# Select an actually exposed /dev/dri/renderD* node. This intentionally checks
+# /dev first so host sysfs entries that are not mapped into a container are ignored.
+auto_select_dri_device() {
+    local dev vendor
+    local fallback=""
+
+    for dev in /dev/dri/renderD*; do
+        [[ -e "$dev" ]] || continue
+        [[ -z "$fallback" ]] && fallback="$dev"
+
+        vendor="$(get_dri_vendor "$dev" || true)"
+        case "$vendor" in
+            0x8086|0x1002)
+                echo "$dev"
+                return 0
+                ;;
+        esac
+    done
+
+    if [[ -n "$fallback" ]]; then
+        echo "$fallback"
+        return 0
+    fi
+
+    return 1
+}
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+    if [[ -z "$DRI_DEVICE" ]]; then
+        DRI_DEVICE="$(auto_select_dri_device || true)"
+    fi
+    [[ -z "$VAAPI_DEVICE" ]] && VAAPI_DEVICE="$DRI_DEVICE"
+    [[ -z "$QSV_DEVICE" ]] && QSV_DEVICE="$DRI_DEVICE"
+fi
+
+# Get hardware fingerprint. Only include DRI render nodes that actually exist
+# in /dev, and include the selected devices so cache invalidates when mappings
+# or explicit device overrides change.
 get_hw_fingerprint() {
     local fp=""
-    # Linux DRI devices
-    for d in /sys/class/drm/card*/device; do
-        if [[ -r "$d/vendor" && -r "$d/device" ]]; then
-            fp+="$(cat "$d/vendor" 2>/dev/null):$(cat "$d/device" 2>/dev/null);"
-        fi
+    local dev node vendor device
+
+    # Linux DRI devices exposed to this process/container
+    for dev in /dev/dri/renderD*; do
+        [[ -e "$dev" ]] || continue
+        node="${dev##*/}"
+        vendor="$(cat "/sys/class/drm/$node/device/vendor" 2>/dev/null || true)"
+        device="$(cat "/sys/class/drm/$node/device/device" 2>/dev/null || true)"
+        fp+="dri:${node}:${vendor:-unknown}:${device:-unknown};"
     done
+
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        fp+="selected:dri=${DRI_DEVICE:-none},vaapi=${VAAPI_DEVICE:-none},qsv=${QSV_DEVICE:-none};"
+    fi
+
     # NVIDIA
     [[ -e /dev/nvidia0 ]] && fp+="nvidia:$(nvidia-smi --query-gpu=gpu_name --format=csv,noheader 2>/dev/null | head -1 | tr ' ' '_');"
     # macOS
@@ -54,32 +115,36 @@ bench_encoder() {
 
     case "$encoder" in
         *_qsv)
+            [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || { echo "0:"; return; }
             # Test normal mode with production settings
             output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -init_hw_device qsv=qsv:hw \
+                -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
+                -filter_hw_device qsv \
                 -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
                 -vf "hwupload=extra_hw_frames=16" \
                 -c:v "$encoder" -preset faster $prod_opts -f null - 2>&1)
             speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
             # Test low power mode (no preset, no B-frames)
             output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -init_hw_device qsv=qsv:hw \
+                -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
+                -filter_hw_device qsv \
                 -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
                 -vf "hwupload=extra_hw_frames=16" \
                 -c:v "$encoder" -low_power true $lp_prod_opts -f null - 2>&1)
             lp_speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
             ;;
         *_vaapi)
+            [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || { echo "0:"; return; }
             # Test normal mode with production settings
             output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -vaapi_device "${VAAPI_DEVICE:-/dev/dri/renderD128}" \
+                -vaapi_device "$VAAPI_DEVICE" \
                 -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
                 -vf "hwupload,scale_vaapi=format=$pix_fmt" \
                 -c:v "$encoder" -rc_mode VBR $prod_opts -f null - 2>&1)
             speed=$(echo "$output" | grep -oP 'speed=\s*\K[0-9.]+(?=x)' | tail -1)
             # Test low power mode (no B-frames)
             output=$(timeout 30s ffmpeg -hide_banner -benchmark \
-                -vaapi_device "${VAAPI_DEVICE:-/dev/dri/renderD128}" \
+                -vaapi_device "$VAAPI_DEVICE" \
                 -f lavfi -i "testsrc=size=$size:duration=$duration:rate=30,format=$pix_fmt" \
                 -vf "hwupload,scale_vaapi=format=$pix_fmt" \
                 -c:v "$encoder" -rc_mode VBR -low_power 1 $lp_prod_opts -f null - 2>&1)
@@ -126,15 +191,18 @@ test_encoder() {
 
     case "$encoder" in
         *_qsv)
+            [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || return 1
             timeout 10s ffmpeg -hide_banner -v error \
-                -init_hw_device qsv=qsv:hw \
+                -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
+                -filter_hw_device qsv \
                 -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt" \
                 -vf "hwupload=extra_hw_frames=16" \
                 -c:v "$encoder" -f null - 2>/dev/null
             ;;
         *_vaapi)
+            [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || return 1
             timeout 10s ffmpeg -hide_banner -v error \
-                -vaapi_device "${VAAPI_DEVICE:-/dev/dri/renderD128}" \
+                -vaapi_device "$VAAPI_DEVICE" \
                 -f lavfi -i "color=black:size=$size:duration=0.1,format=$pix_fmt" \
                 -vf "hwupload,scale_vaapi=format=$pix_fmt" \
                 -c:v "$encoder" -f null - 2>/dev/null
@@ -171,8 +239,20 @@ test_10bit_decode() {
     [[ ! -f "$PROBE_SAMPLE" ]] && return 1
 
     case "$accel" in
-        qsv) hwaccel_args=(-hwaccel qsv -hwaccel_output_format qsv) ;;
-        vaapi) hwaccel_args=(-hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "${VAAPI_DEVICE:-/dev/dri/renderD128}") ;;
+        qsv)
+            [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || return 1
+            hwaccel_args=(
+                -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE"
+                -filter_hw_device qsv
+                -hwaccel qsv
+                -hwaccel_device qsv
+                -hwaccel_output_format qsv
+            )
+            ;;
+        vaapi)
+            [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || return 1
+            hwaccel_args=(-hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE")
+            ;;
         nvenc) hwaccel_args=(-hwaccel cuda -hwaccel_output_format cuda) ;;
         videotoolbox) hwaccel_args=(-hwaccel videotoolbox) ;;
         *) return 1 ;;  # software doesn't need this test
@@ -195,22 +275,26 @@ probe_capabilities() {
     # Test matrix: accel -> codecs
     local accels_to_test=()
     local can_decode_10bit=""
+    local vendor=""
 
-    # Detect what to test based on hardware
+    # Detect what to test based on hardware actually exposed in /dev.
     if [[ "$(uname -s)" == "Darwin" ]]; then
         accels_to_test+=("videotoolbox")
     else
         [[ -e /dev/nvidia0 ]] && accels_to_test+=("nvenc")
-        if [[ -e /dev/dri/renderD128 ]]; then
-            for v in /sys/class/drm/renderD*/device/vendor; do
-                [[ -r "$v" ]] || continue
-                case "$(cat "$v" 2>/dev/null)" in
-                    0x8086) accels_to_test+=("qsv" "vaapi") ;;
-                    0x1002) accels_to_test+=("vaapi") ;;
-                esac
-                break
-            done
+
+        if [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]]; then
+            vendor="$(get_dri_vendor "$QSV_DEVICE" || true)"
+            [[ "$vendor" == "0x8086" ]] && accels_to_test+=("qsv")
         fi
+
+        if [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]]; then
+            vendor="$(get_dri_vendor "$VAAPI_DEVICE" || true)"
+            case "$vendor" in
+                0x8086|0x1002) accels_to_test+=("vaapi") ;;
+            esac
+        fi
+
         # V4L2 M2M (ARM: Raspberry Pi, Rockchip, etc.)
         for n in /sys/class/video4linux/video*/name; do
             if [[ -r "$n" ]] && grep -qiE 'm2m|codec' "$n" 2>/dev/null; then
@@ -346,22 +430,24 @@ detect_accel() {
     if [[ -e /dev/nvidia0 ]]; then
         echo "nvenc"; return
     fi
-    # Check DRI vendor for Intel/AMD
-    local vendor
-    for v in /sys/class/drm/renderD*/device/vendor; do
-        [[ -r "$v" ]] || continue
-        vendor=$(cat "$v" 2>/dev/null)
+    # Check the selected, actually exposed DRI device for Intel/AMD.
+    local vendor=""
+    if [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]]; then
+        vendor="$(get_dri_vendor "$VAAPI_DEVICE" || true)"
         case "$vendor" in
-            0x8086) echo "vaapi"; return ;; # Intel
-            0x1002) echo "vaapi"; return ;; # AMD
+            0x8086|0x1002) echo "vaapi"; return ;;
         esac
-    done
+    fi
+    if [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]]; then
+        vendor="$(get_dri_vendor "$QSV_DEVICE" || true)"
+        [[ "$vendor" == "0x8086" ]] && { echo "qsv"; return; }
+    fi
     # V4L2 M2M (ARM: Raspberry Pi, Rockchip, etc.)
     for n in /sys/class/video4linux/video*/name; do
         [[ -r "$n" ]] && grep -qiE 'm2m|codec' "$n" && echo "v4l2m2m" && return
     done
-    # Fallback to vaapi if DRI exists, else software
-    if [[ -e /dev/dri/renderD128 ]]; then
+    # Fallback to VAAPI if an exposed DRI render node exists, else software
+    if [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]]; then
         echo "vaapi"
     else
         echo "software"
@@ -416,6 +502,22 @@ case "$ACCEL" in
         ;;
 esac
 
+# Validate the selected render node for accelerators that require one.
+case "$ACCEL" in
+    qsv)
+        if [[ -z "$QSV_DEVICE" || ! -e "$QSV_DEVICE" ]]; then
+            echo "$LOG_PREFIX ERROR: QSV render device not available: ${QSV_DEVICE:-none}" >&2
+            exit 1
+        fi
+        ;;
+    vaapi)
+        if [[ -z "$VAAPI_DEVICE" || ! -e "$VAAPI_DEVICE" ]]; then
+            echo "$LOG_PREFIX ERROR: VAAPI render device not available: ${VAAPI_DEVICE:-none}" >&2
+            exit 1
+        fi
+        ;;
+esac
+
 case "$VCODEC_OUT" in
     h264|hevc) ;;
     *)
@@ -428,10 +530,16 @@ esac
 set_hwaccel_args() {
     case "$ACCEL" in
         qsv)
-            HWACCEL_ARGS=( -hwaccel qsv -hwaccel_output_format qsv )
+            HWACCEL_ARGS=(
+                -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE"
+                -filter_hw_device qsv
+                -hwaccel qsv
+                -hwaccel_device qsv
+                -hwaccel_output_format qsv
+            )
             ;;
         vaapi)
-            HWACCEL_ARGS=( -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "${VAAPI_DEVICE:-/dev/dri/renderD128}" )
+            HWACCEL_ARGS=( -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE" )
             ;;
         nvenc)
             HWACCEL_ARGS=( -hwaccel cuda -hwaccel_output_format cuda )
@@ -656,7 +764,13 @@ if [[ -n "$PASSTHROUGH" ]]; then
         pipe:1
 fi
 
-echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${ABITRATE}bps ${ACHANNELS}ch accel=${ACCEL}" >&2
+DEVICE_INFO=""
+case "$ACCEL" in
+    qsv) DEVICE_INFO=" device=$QSV_DEVICE" ;;
+    vaapi) DEVICE_INFO=" device=$VAAPI_DEVICE" ;;
+esac
+
+echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT @ $FPS_FRAC -> $ENCODER GOP=$GOP${GOP_WARN} audio=${ABITRATE}bps ${ACHANNELS}ch accel=${ACCEL}${DEVICE_INFO}" >&2
 
 exec ffmpeg \
     "${UA_ARGS[@]}" \
