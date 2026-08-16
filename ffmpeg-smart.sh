@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v9"
+VERSION="render-node-v10"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -964,14 +964,17 @@ if [[ "$IS_HDR" == "true" && "$VCODEC_OUT" == "hevc" && "$ALLOW_HDR" == "true" &
     HDR_ARGS="-color_primaries bt2020 -color_trc $COLOR_TRANSFER -colorspace bt2020nc"
 fi
 
-# Bitrate target uses the output resolution. A supplied max bitrate becomes a
-# hard maxrate for the transcode; without one, retain the existing 125% headroom.
+# Bitrate target uses the output resolution. With -maxbr/-maxbitrate, use
+# constrained VBR: keep the normal resolution-derived target unless it exceeds
+# 85% of the requested ceiling, while maxrate remains the full requested max.
 BASE_VBITRATE=8000000
 VBITRATE=$((BASE_VBITRATE * TARGET_WIDTH * TARGET_HEIGHT / 1920 / 1080))
 [[ $VBITRATE -lt 2000000 ]] && VBITRATE=2000000
 
 if [[ -n "$MAX_BITRATE" ]]; then
-    [[ "$VBITRATE" -gt "$MAX_BITRATE" ]] && VBITRATE="$MAX_BITRATE"
+    VBR_TARGET_MAX=$((MAX_BITRATE * 85 / 100))
+    [[ "$VBR_TARGET_MAX" -lt 1 ]] && VBR_TARGET_MAX=1
+    [[ "$VBITRATE" -gt "$VBR_TARGET_MAX" ]] && VBITRATE="$VBR_TARGET_MAX"
     MAXRATE="$MAX_BITRATE"
     BUFSIZE=$((MAX_BITRATE * 2))
 else
@@ -1005,7 +1008,7 @@ esac
 
 PROFILE_INFO=""
 [[ -n "$MAX_RES" ]] && PROFILE_INFO+=" maxres=${MAX_RES}"
-[[ -n "$MAX_BITRATE" ]] && PROFILE_INFO+=" maxbr=${MAX_BITRATE}"
+[[ -n "$MAX_BITRATE" ]] && PROFILE_INFO+=" maxbr=${MAX_BITRATE} vbr=${VBITRATE}/${MAXRATE}"
 [[ -n "$MAX_CHANNELS" ]] && PROFILE_INFO+=" maxchan=${MAX_CHANNELS}"
 [[ "$FORCE_SDR" == "true" ]] && PROFILE_INFO+=" sdr=true"
 
