@@ -124,7 +124,7 @@ probe-sample.mkv      # Jellyfin 10-bit HEVC demo clip
 Example cache from an Intel system with only `/dev/dri/renderD129` exposed:
 
 ```bash
-HW_FINGERPRINT='script=render-node-v4;dri:renderD129:0x8086:0x56a6;selected:dri=/dev/dri/renderD129,vaapi=/dev/dri/renderD129,qsv=/dev/dri/renderD129;'
+HW_FINGERPRINT='script=render-node-v5;dri:renderD129:0x8086:0x56a6;selected:dri=/dev/dri/renderD129,vaapi=/dev/dri/renderD129,qsv=/dev/dri/renderD129;'
 BEST_ACCEL='qsv'
 BEST_CODEC='hevc'
 BEST_LOW_POWER='0'
