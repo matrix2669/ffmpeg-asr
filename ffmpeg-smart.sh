@@ -4,21 +4,50 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="partial-hardware-cache-v18"
+VERSION="cli-device-override-v19"
 CAPACITY_BENCHMARK_VERSION="concurrency-1.2-v1"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
 
-DRI_DEVICE_WAS_SET=false
-VAAPI_DEVICE_WAS_SET=false
-QSV_DEVICE_WAS_SET=false
-[[ -n "${DRI_DEVICE:-}" ]] && DRI_DEVICE_WAS_SET=true
-[[ -n "${VAAPI_DEVICE:-}" ]] && VAAPI_DEVICE_WAS_SET=true
-[[ -n "${QSV_DEVICE:-}" ]] && QSV_DEVICE_WAS_SET=true
 DRI_DEVICE="${DRI_DEVICE:-}"
 VAAPI_DEVICE="${VAAPI_DEVICE:-}"
 QSV_DEVICE="${QSV_DEVICE:-}"
+DRI_DEVICE_WAS_SET=false
+VAAPI_DEVICE_WAS_SET=false
+QSV_DEVICE_WAS_SET=false
+[[ -n "$DRI_DEVICE" ]] && DRI_DEVICE_WAS_SET=true
+[[ -n "$VAAPI_DEVICE" ]] && VAAPI_DEVICE_WAS_SET=true
+[[ -n "$QSV_DEVICE" ]] && QSV_DEVICE_WAS_SET=true
+
+# Device overrides must be known before hardware fingerprinting and cache load.
+CLI_ARGS=("$@")
+for ((CLI_INDEX = 0; CLI_INDEX < ${#CLI_ARGS[@]}; CLI_INDEX++)); do
+    case "${CLI_ARGS[$CLI_INDEX]}" in
+        -device|-dri-device)
+            (( CLI_INDEX + 1 < ${#CLI_ARGS[@]} )) || { echo "$LOG_PREFIX ERROR: ${CLI_ARGS[$CLI_INDEX]} requires a device path" >&2; exit 1; }
+            CLI_INDEX=$((CLI_INDEX + 1))
+            DRI_DEVICE="${CLI_ARGS[$CLI_INDEX]}"
+            VAAPI_DEVICE="$DRI_DEVICE"
+            QSV_DEVICE="$DRI_DEVICE"
+            DRI_DEVICE_WAS_SET=true
+            VAAPI_DEVICE_WAS_SET=true
+            QSV_DEVICE_WAS_SET=true
+            ;;
+        -vaapi-device)
+            (( CLI_INDEX + 1 < ${#CLI_ARGS[@]} )) || { echo "$LOG_PREFIX ERROR: -vaapi-device requires a device path" >&2; exit 1; }
+            CLI_INDEX=$((CLI_INDEX + 1))
+            VAAPI_DEVICE="${CLI_ARGS[$CLI_INDEX]}"
+            VAAPI_DEVICE_WAS_SET=true
+            ;;
+        -qsv-device)
+            (( CLI_INDEX + 1 < ${#CLI_ARGS[@]} )) || { echo "$LOG_PREFIX ERROR: -qsv-device requires a device path" >&2; exit 1; }
+            CLI_INDEX=$((CLI_INDEX + 1))
+            QSV_DEVICE="${CLI_ARGS[$CLI_INDEX]}"
+            QSV_DEVICE_WAS_SET=true
+            ;;
+    esac
+done
 
 get_dri_vendor() {
     local dev="$1"
@@ -835,6 +864,7 @@ while [[ $# -gt 0 ]]; do
         -user_agent) AGENT="$2"; shift 2 ;;
         -i) URL="$2"; shift 2 ;;
         -accel) ACCEL="$2"; shift 2 ;;
+        -device|-dri-device|-qsv-device|-vaapi-device) shift 2 ;;
         -vc) VCODEC_OUT="$2"; shift 2 ;;
         -10bit) ALLOW_10BIT=true; shift ;;
         -hdr) ALLOW_HDR=true; shift ;;
