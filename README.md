@@ -228,13 +228,27 @@ MULTI_GPU_BENCH_RUNS=5 \
 
 The probe sample is looped for the requested duration, so the source file itself does not need to be 60 seconds long.
 
-Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. It selects the device with the lower proportional load:
+Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. Jobs launched by `ffmpeg-smart.sh` expose their input dimensions, output dimensions, and exact fractional frame rate through inherited environment markers. Each job is converted to 1080p30-equivalent load:
 
 ```text
-load = active ffmpeg jobs / benchmarked device capacity
+job load = max(input pixel rate, output pixel rate) / 1080p30 pixel rate
+GPU utilization = total weighted job load / benchmarked raw device speed
 ```
 
-For example, a primary device with 3 active jobs and capacity 8 (37.5%) is preferred over a secondary with 3 active jobs and capacity 6 (50%). Equal loads favor the primary device. Only processes visible in the script's PID namespace can be counted, so a normal Docker container will not see FFmpeg jobs in unrelated containers or on the host.
+Typical weights are:
+
+| Transcode | 1080p30 units |
+|-----------|---------------|
+| 720p30 → 720p30 | 0.44 |
+| 720p60 → 720p60 | 0.89 |
+| 1080p30 → 720p30 | 1.00 |
+| 1080p60 → 1080p60 | 2.00 |
+| 4K30 → 1080p30 | 4.00 |
+| 4K60 → 4K60 | 8.00 |
+
+Input size accounts for decode work, while output size accounts for encode work and upscaling. The larger pixel rate is used as a conservative single load value. Fractional rates such as `60000/1001` are retained. An external FFmpeg process without the markers counts as one 1080p30 unit.
+
+The device with lower proportional utilization is selected, and equal utilization favors the primary. Raw median benchmark speed is used as the denominator, so performance differences hidden by the rounded human-readable capacity still affect scheduling. Only processes visible in the script's PID namespace can be counted, so a normal Docker container will not see FFmpeg jobs in unrelated containers or on the host.
 
 Automatic selection is self-contained: it does not require shared state, lock files, or GPU monitoring services. Device selection can still be overridden:
 

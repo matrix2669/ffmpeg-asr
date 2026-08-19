@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="multi-gpu-long-bench-v13"
+VERSION="weighted-gpu-load-v14"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -48,31 +48,77 @@ auto_select_dri_device() {
     return 1
 }
 
-count_ffmpeg_jobs_on_device() {
+get_ffmpeg_job_load_milli() {
+    local proc="$1"
+    local env_line key value
+    local input_width="" input_height="" output_width="" output_height="" fps=""
+    local fps_num fps_den input_pixels output_pixels max_pixels load
+
+    [[ -r "$proc/environ" ]] || { echo 1000; return; }
+    while IFS= read -r env_line; do
+        key="${env_line%%=*}"
+        value="${env_line#*=}"
+        case "$key" in
+            FFMPEG_SMART_INPUT_WIDTH) input_width="$value" ;;
+            FFMPEG_SMART_INPUT_HEIGHT) input_height="$value" ;;
+            FFMPEG_SMART_OUTPUT_WIDTH) output_width="$value" ;;
+            FFMPEG_SMART_OUTPUT_HEIGHT) output_height="$value" ;;
+            FFMPEG_SMART_FPS_FRAC) fps="$value" ;;
+        esac
+    done < <(tr '\0' '\n' < "$proc/environ" 2>/dev/null || true)
+
+    if [[ ! "$input_width" =~ ^[1-9][0-9]*$ || ! "$input_height" =~ ^[1-9][0-9]*$ ||
+          ! "$output_width" =~ ^[1-9][0-9]*$ || ! "$output_height" =~ ^[1-9][0-9]*$ ||
+          ! "$fps" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]]; then
+        echo 1000
+        return
+    fi
+    fps_num="${BASH_REMATCH[1]}"
+    fps_den="${BASH_REMATCH[2]}"
+    input_pixels=$((input_width * input_height * fps_num))
+    output_pixels=$((output_width * output_height * fps_num))
+    max_pixels="$input_pixels"
+    (( output_pixels > max_pixels )) && max_pixels="$output_pixels"
+    load=$((max_pixels * 1000 / (1920 * 1080 * 30 * fps_den)))
+    (( load > 0 )) || load=1
+    echo "$load"
+}
+
+get_ffmpeg_load_milli_on_device() {
     local device="$1"
-    local proc pid fd target count=0
+    local proc comm fd target total=0
     for proc in /proc/[0-9]*; do
         [[ -r "$proc/comm" ]] || continue
-        read -r pid < "$proc/comm" || continue
-        [[ "$pid" == "ffmpeg" ]] || continue
+        read -r comm < "$proc/comm" || continue
+        [[ "$comm" == "ffmpeg" ]] || continue
         for fd in "$proc"/fd/*; do
             [[ -e "$fd" ]] || continue
             target="$(readlink "$fd" 2>/dev/null || true)"
             if [[ "$target" == "$device" || "$target" == "$device (deleted)" ]]; then
-                count=$((count + 1))
+                total=$((total + $(get_ffmpeg_job_load_milli "$proc")))
                 break
             fi
         done
     done
-    echo "$count"
+    echo "$total"
 }
 
 select_least_loaded_dri_device() {
     local primary="${PRIMARY_DEVICE:-}"
     local secondary="${SECONDARY_DEVICE:-}"
-    local primary_capacity="${PRIMARY_CAPACITY:-0}"
-    local secondary_capacity="${SECONDARY_CAPACITY:-0}"
-    local primary_jobs secondary_jobs selected
+    local primary_capacity secondary_capacity
+    local primary_load secondary_load selected
+
+    if [[ "${PRIMARY_SPEED:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        primary_capacity="$(awk "BEGIN {printf \"%.0f\\n\", $PRIMARY_SPEED * 1000}")"
+    else
+        primary_capacity=$(( ${PRIMARY_CAPACITY:-0} * 1000 ))
+    fi
+    if [[ "${SECONDARY_SPEED:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        secondary_capacity="$(awk "BEGIN {printf \"%.0f\\n\", $SECONDARY_SPEED * 1000}")"
+    else
+        secondary_capacity=$(( ${SECONDARY_CAPACITY:-0} * 1000 ))
+    fi
 
     [[ -n "$primary" && -e "$primary" && "$primary_capacity" =~ ^[1-9][0-9]*$ ]] || return 1
     if [[ -z "$secondary" || ! -e "$secondary" || ! "$secondary_capacity" =~ ^[1-9][0-9]*$ ]]; then
@@ -80,14 +126,14 @@ select_least_loaded_dri_device() {
         return 0
     fi
 
-    primary_jobs="$(count_ffmpeg_jobs_on_device "$primary")"
-    secondary_jobs="$(count_ffmpeg_jobs_on_device "$secondary")"
+    primary_load="$(get_ffmpeg_load_milli_on_device "$primary")"
+    secondary_load="$(get_ffmpeg_load_milli_on_device "$secondary")"
     selected="$primary"
     # Compare the fractions without floating point. A tie deliberately favors primary.
-    if (( secondary_jobs * primary_capacity < primary_jobs * secondary_capacity )); then
+    if (( secondary_load * primary_capacity < primary_load * secondary_capacity )); then
         selected="$secondary"
     fi
-    echo "$LOG_PREFIX GPU load: primary=$primary_jobs/$primary_capacity secondary=$secondary_jobs/$secondary_capacity selected=$selected" >&2
+    echo "$LOG_PREFIX GPU load (1080p30 milli-units): primary=$primary_load/$primary_capacity secondary=$secondary_load/$secondary_capacity selected=$selected" >&2
     echo "$selected"
 }
 
@@ -1028,6 +1074,14 @@ PROFILE_INFO=""
 [[ "$FORCE_DEINT" == "true" ]] && PROFILE_INFO+=" deint=true"
 
 echo "$LOG_PREFIX Detected ${WIDTH}x${HEIGHT} $VCODEC/$PIX_FMT field=${FIELD_ORDER} @ $FPS_FRAC -> $ENCODER ${TARGET_WIDTH}x${TARGET_HEIGHT} reason=${VIDEO_TRANSCODE_REASON} GOP=$GOP${GOP_WARN} audio=${AUDIO_INFO} accel=${ACCEL}${DEVICE_INFO} 10bit=${ALLOW_10BIT} hdr=${ALLOW_HDR}${PROFILE_INFO}" >&2
+
+# These markers are inherited by ffmpeg and let another ffmpeg-smart process
+# calculate this job's load from /proc/<pid>/environ without shared state.
+export FFMPEG_SMART_INPUT_WIDTH="$WIDTH"
+export FFMPEG_SMART_INPUT_HEIGHT="$HEIGHT"
+export FFMPEG_SMART_OUTPUT_WIDTH="$TARGET_WIDTH"
+export FFMPEG_SMART_OUTPUT_HEIGHT="$TARGET_HEIGHT"
+export FFMPEG_SMART_FPS_FRAC="$FPS_OUT"
 
 exec ffmpeg \
     "${UA_ARGS[@]}" \
