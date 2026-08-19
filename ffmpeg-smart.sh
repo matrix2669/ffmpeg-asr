@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="concurrent-headroom-v16"
+VERSION="hardware-fingerprint-v17"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -139,13 +139,16 @@ fi
 
 get_hw_fingerprint() {
     local fp="script=$VERSION;"
-    local dev node vendor device
+    local dev node vendor device revision subsystem_vendor subsystem_device
     for dev in /dev/dri/renderD*; do
         [[ -e "$dev" ]] || continue
         node="${dev##*/}"
         vendor="$(cat "/sys/class/drm/$node/device/vendor" 2>/dev/null || true)"
         device="$(cat "/sys/class/drm/$node/device/device" 2>/dev/null || true)"
-        fp+="dri:${node}:${vendor:-unknown}:${device:-unknown};"
+        revision="$(cat "/sys/class/drm/$node/device/revision" 2>/dev/null || true)"
+        subsystem_vendor="$(cat "/sys/class/drm/$node/device/subsystem_vendor" 2>/dev/null || true)"
+        subsystem_device="$(cat "/sys/class/drm/$node/device/subsystem_device" 2>/dev/null || true)"
+        fp+="dri:${node}:${vendor:-unknown}:${device:-unknown}:${revision:-unknown}:${subsystem_vendor:-unknown}:${subsystem_device:-unknown};"
     done
     if [[ "$(uname -s)" == "Linux" ]]; then
         fp+="selected:dri=${DRI_DEVICE:-none},vaapi=${VAAPI_DEVICE:-none},qsv=${QSV_DEVICE:-none};"

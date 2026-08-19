@@ -302,7 +302,7 @@ SECONDARY_CAPACITY='6'
 
 The cache describes the preferred transcode path; it does not mean every input is transcoded.
 
-The cache fingerprint includes the script version, exposed DRI devices, selected device overrides, and detected GPU hardware. Capability-changing script updates therefore invalidate an older cache automatically. Use `--recache` to force a fresh probe manually.
+The cache fingerprint includes the script version, exposed DRI render-node mapping, GPU vendor/device/revision/subsystem IDs, and selected device overrides. A relevant script, GPU hardware, or render-node mapping change invalidates the cache and automatically reruns the capability and concurrency benchmarks. Moving the container to a host with equivalent GPU hardware reuses the cache, even when host identity, kernel, driver version, or PCI location differs. Use `--recache` to force a fresh probe manually.
 
 ## Benchmarking
 
