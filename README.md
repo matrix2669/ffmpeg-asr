@@ -216,23 +216,25 @@ Non-AAC or downmixed audio uses `aresample=async=1` to help maintain A/V sync.
 
 On Linux, the scripts enumerate render nodes that actually exist under `/dev/dri/renderD*`. This avoids selecting host sysfs devices that are not mapped into a Docker/LXC container.
 
-When more than one compatible render node is exposed, the capability probe benchmarks each device independently. It runs three 60-second passes per device, uses the median raw speed to rank them, and rounds that speed down to a sustainable concurrent-stream capacity. The two fastest devices become the primary and secondary devices. Ranking by raw speed means a `4.8x` device is preferred over a `4.1x` device even though both have a rounded capacity of four streams.
+When more than one compatible render node is exposed, the capability probe measures real concurrent-stream capacity on each device independently. It first measures single-stream speed to choose a starting point, then launches that many simultaneous real-time transcodes. Ten-second tests bracket the stable/unstable boundary, followed by 30-second confirmation at the highest stable level and the next level. Every stream must finish successfully and maintain at least `0.95x` speed.
 
-The extended comparison runs only when multiple compatible GPUs are visible. A single-GPU system retains the quick five-second probe. The multi-GPU duration and run count can be adjusted when needed:
+The extended concurrency test runs only when multiple compatible GPUs are visible. A single-GPU system retains the quick five-second throughput estimate. Concurrency settings can be adjusted when needed:
 
 ```bash
-MULTI_GPU_BENCH_DURATION=90 \
-MULTI_GPU_BENCH_RUNS=5 \
+CONCURRENCY_SHORT_DURATION=15 \
+CONCURRENCY_CONFIRM_DURATION=45 \
+CONCURRENCY_MIN_SPEED=0.97 \
+CONCURRENCY_MAX_STREAMS=48 \
 ./ffmpeg-smart.sh --recache
 ```
 
-The probe sample is looped for the requested duration, so the source file itself does not need to be 60 seconds long.
+The probe sample is looped independently for every concurrent worker, so the source file itself does not need to match the test duration.
 
 Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. Jobs launched by `ffmpeg-smart.sh` expose their input dimensions, output dimensions, and exact fractional frame rate through inherited environment markers. Each job is converted to 1080p30-equivalent load:
 
 ```text
 job load = max(input pixel rate, output pixel rate) / 1080p30 pixel rate
-GPU utilization = total weighted job load / benchmarked raw device speed
+GPU utilization = total weighted job load / verified concurrent capacity
 ```
 
 Typical weights are:
@@ -248,7 +250,7 @@ Typical weights are:
 
 Input size accounts for decode work, while output size accounts for encode work and upscaling. The larger pixel rate is used as a conservative single load value. Fractional rates such as `60000/1001` are retained. An external FFmpeg process without the markers counts as one 1080p30 unit.
 
-The device with lower proportional utilization is selected, and equal utilization favors the primary. Raw median benchmark speed is used as the denominator, so performance differences hidden by the rounded human-readable capacity still affect scheduling. Only processes visible in the script's PID namespace can be counted, so a normal Docker container will not see FFmpeg jobs in unrelated containers or on the host.
+The device with lower proportional utilization is selected, and equal utilization favors the primary. Verified concurrent capacity is the denominator; single-stream speed breaks ties between devices with the same verified capacity. Only processes visible in the script's PID namespace can be counted, so a normal Docker container will not see FFmpeg jobs in unrelated containers or on the host.
 
 Automatic selection is self-contained: it does not require shared state, lock files, or GPU monitoring services. Device selection can still be overridden:
 
@@ -277,7 +279,7 @@ On a capability probe, the script:
 3. Benchmarks available H264/HEVC encoders.
 4. Tests normal and low-power modes where supported.
 5. Tracks 10-bit decode and encode capability per accelerator.
-6. Benchmarks the selected QSV/VAAPI path on every compatible DRM render node.
+6. Finds and confirms real concurrent-stream capacity on every compatible DRM render node.
 7. Stores the fastest working fallback path and primary/secondary device capacities in `.capabilities.cache`.
 
 Example:

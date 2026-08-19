@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="weighted-gpu-load-v14"
+VERSION="concurrent-capacity-v15"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -109,16 +109,8 @@ select_least_loaded_dri_device() {
     local primary_capacity secondary_capacity
     local primary_load secondary_load selected
 
-    if [[ "${PRIMARY_SPEED:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        primary_capacity="$(awk "BEGIN {printf \"%.0f\\n\", $PRIMARY_SPEED * 1000}")"
-    else
-        primary_capacity=$(( ${PRIMARY_CAPACITY:-0} * 1000 ))
-    fi
-    if [[ "${SECONDARY_SPEED:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        secondary_capacity="$(awk "BEGIN {printf \"%.0f\\n\", $SECONDARY_SPEED * 1000}")"
-    else
-        secondary_capacity=$(( ${SECONDARY_CAPACITY:-0} * 1000 ))
-    fi
+    primary_capacity=$(( ${PRIMARY_CAPACITY:-0} * 1000 ))
+    secondary_capacity=$(( ${SECONDARY_CAPACITY:-0} * 1000 ))
 
     [[ -n "$primary" && -e "$primary" && "$primary_capacity" =~ ^[1-9][0-9]*$ ]] || return 1
     if [[ -z "$secondary" || ! -e "$secondary" || ! "$secondary_capacity" =~ ^[1-9][0-9]*$ ]]; then
@@ -403,18 +395,124 @@ test_10bit_decode() {
         -f null - 2>/dev/null
 }
 
+run_concurrency_level() {
+    local accel="$1" encoder="$2" device="$3" use_low_power="$4"
+    local streams="$5" duration="$6"
+    local min_speed="${CONCURRENCY_MIN_SPEED:-0.95}"
+    local work_dir i pid status=0 speed
+    local -a pids=()
+    local -a cmd=()
+
+    work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ffmpeg-smart-concurrency.XXXXXX")"
+    for ((i = 1; i <= streams; i++)); do
+        case "$accel" in
+            qsv)
+                cmd=(ffmpeg -nostdin -hide_banner -v error -nostats
+                    -init_hw_device "qsv=qsv:hw,child_device=$device" -filter_hw_device qsv
+                    -hwaccel qsv -hwaccel_device qsv -hwaccel_output_format qsv
+                    -re -stream_loop -1 -i "$PROBE_SAMPLE" -t "$duration"
+                    -vf scale_qsv=format=nv12 -an -c:v "$encoder")
+                if [[ "$use_low_power" == "1" ]]; then
+                    cmd+=(-low_power true -look_ahead 0 -bf 0)
+                else
+                    cmd+=(-preset faster -bf 2)
+                fi
+                ;;
+            vaapi)
+                cmd=(ffmpeg -nostdin -hide_banner -v error -nostats
+                    -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$device"
+                    -re -stream_loop -1 -i "$PROBE_SAMPLE" -t "$duration"
+                    -vf scale_vaapi=format=nv12 -an -c:v "$encoder" -rc_mode VBR)
+                if [[ "$use_low_power" == "1" ]]; then cmd+=(-low_power 1 -bf 0); else cmd+=(-bf 2); fi
+                ;;
+            *) rm -rf "$work_dir"; return 1 ;;
+        esac
+        cmd+=(-b:v 8M -maxrate 10M -bufsize 16M -g 30
+            -progress "$work_dir/progress.$i" -f null -)
+        timeout "$((duration + 15))s" "${cmd[@]}" > /dev/null 2>"$work_dir/error.$i" &
+        pids+=("$!")
+    done
+
+    for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+    for ((i = 1; i <= streams; i++)); do
+        speed="$(sed -n 's/^speed=\([0-9.]*\)x$/\1/p' "$work_dir/progress.$i" 2>/dev/null | tail -1)"
+        if [[ ! "$speed" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk "BEGIN {exit !($speed >= $min_speed)}"; then
+            status=1
+            echo "$LOG_PREFIX   stream $i unstable speed=${speed:-missing}x" >&2
+        fi
+    done
+    rm -rf "$work_dir"
+    return "$status"
+}
+
+find_concurrent_capacity() {
+    local accel="$1" encoder="$2" device="$3" use_low_power="$4" estimate="$5"
+    local short_duration="${CONCURRENCY_SHORT_DURATION:-10}"
+    local confirm_duration="${CONCURRENCY_CONFIRM_DURATION:-30}"
+    local max_streams="${CONCURRENCY_MAX_STREAMS:-64}"
+    local low=0 high=0 test_level step candidate value
+
+    for value in "$short_duration" "$confirm_duration" "$max_streams"; do
+        [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "$LOG_PREFIX ERROR: Invalid concurrency benchmark setting: $value" >&2; return 1; }
+    done
+    [[ "$estimate" =~ ^[1-9][0-9]*$ ]] || estimate=1
+    (( estimate > max_streams )) && estimate="$max_streams"
+    echo "$LOG_PREFIX Concurrent search on $device: estimate=$estimate short=${short_duration}s confirm=${confirm_duration}s" >&2
+
+    if run_concurrency_level "$accel" "$encoder" "$device" "$use_low_power" "$estimate" "$short_duration"; then
+        low="$estimate"
+        step=$((estimate / 4)); (( step > 0 )) || step=1
+        while (( low < max_streams )); do
+            test_level=$((low + step)); (( test_level > max_streams )) && test_level="$max_streams"
+            echo "$LOG_PREFIX Testing $test_level concurrent streams for ${short_duration}s..." >&2
+            if run_concurrency_level "$accel" "$encoder" "$device" "$use_low_power" "$test_level" "$short_duration"; then
+                low="$test_level"
+                (( low == max_streams )) && break
+            else
+                high="$test_level"
+                break
+            fi
+        done
+    else
+        high="$estimate"
+    fi
+
+    while (( high > 0 && high - low > 1 )); do
+        test_level=$(((low + high) / 2))
+        echo "$LOG_PREFIX Testing $test_level concurrent streams for ${short_duration}s..." >&2
+        if run_concurrency_level "$accel" "$encoder" "$device" "$use_low_power" "$test_level" "$short_duration"; then low="$test_level"; else high="$test_level"; fi
+    done
+
+    candidate="$low"
+    while (( candidate > 0 )); do
+        echo "$LOG_PREFIX Confirming $candidate concurrent streams for ${confirm_duration}s..." >&2
+        if run_concurrency_level "$accel" "$encoder" "$device" "$use_low_power" "$candidate" "$confirm_duration"; then break; fi
+        candidate=$((candidate - 1))
+    done
+    if (( candidate < max_streams )); then
+        test_level=$((candidate + 1))
+        echo "$LOG_PREFIX Checking instability at $test_level streams for ${confirm_duration}s..." >&2
+        while run_concurrency_level "$accel" "$encoder" "$device" "$use_low_power" "$test_level" "$confirm_duration"; do
+            candidate="$test_level"
+            (( candidate >= max_streams )) && break
+            test_level=$((candidate + 1))
+            echo "$LOG_PREFIX Checking $test_level streams for ${confirm_duration}s..." >&2
+        done
+    fi
+    echo "$candidate"
+}
+
 benchmark_dri_capacities() {
     local accel="$1"
     local codec="$2"
+    local use_low_power="${3:-0}"
     local original_qsv="$QSV_DEVICE"
     local original_vaapi="$VAAPI_DEVICE"
     local encoder="${codec}_${accel}"
-    local dev vendor result speed lp_speed fastest capacity median_speed
-    local duration=5 runs=1 run
+    local dev vendor result speed lp_speed fastest capacity estimate
     local primary="" secondary="" primary_capacity=0 secondary_capacity=0
     local primary_speed=0 secondary_speed=0
     local -a compatible_devices=()
-    local -a run_speeds=()
 
     case "$accel" in
         qsv|vaapi) ;;
@@ -437,48 +535,36 @@ benchmark_dri_capacities() {
         compatible_devices+=("$dev")
     done
 
-    if (( ${#compatible_devices[@]} > 1 )); then
-        duration="${MULTI_GPU_BENCH_DURATION:-60}"
-        runs="${MULTI_GPU_BENCH_RUNS:-3}"
-        if [[ ! "$duration" =~ ^[1-9][0-9]*$ || ! "$runs" =~ ^[1-9][0-9]*$ ]]; then
-            echo "$LOG_PREFIX WARNING: Invalid multi-GPU benchmark settings; using 60 seconds and 3 runs" >&2
-            duration=60
-            runs=3
-        fi
-        echo "$LOG_PREFIX Multi-GPU comparison: ${duration}s x ${runs} runs per device" >&2
-    fi
-
     for dev in "${compatible_devices[@]}"; do
         [[ "$accel" == "qsv" ]] && QSV_DEVICE="$dev" || VAAPI_DEVICE="$dev"
-        run_speeds=()
-        for ((run = 1; run <= runs; run++)); do
-            echo "$LOG_PREFIX Measuring $encoder on $dev (run $run/$runs, ${duration}s)..." >&2
-            result="$(bench_encoder "$encoder" "$duration" "$duration")"
-            speed="${result%%:*}"
-            lp_speed="${result##*:}"
-            fastest="${speed:-0}"
-            if [[ -n "$lp_speed" ]] && awk "BEGIN {exit !($lp_speed > $fastest)}"; then fastest="$lp_speed"; fi
-            [[ "$fastest" =~ ^[0-9]+([.][0-9]+)?$ ]] || fastest=0
-            run_speeds+=("$fastest")
-            echo "$LOG_PREFIX   $dev run $run speed=${fastest}x" >&2
-        done
-        median_speed="$(printf '%s\n' "${run_speeds[@]}" | sort -n | awk '{v[NR]=$1} END {if (NR % 2) print v[(NR+1)/2]; else printf "%.3f\n", (v[NR/2] + v[NR/2+1]) / 2}')"
-        capacity="$(awk "BEGIN {print int($median_speed)}")"
+        echo "$LOG_PREFIX Measuring single-stream $encoder speed on $dev..." >&2
+        result="$(bench_encoder "$encoder")"
+        speed="${result%%:*}"
+        lp_speed="${result##*:}"
+        if [[ "$use_low_power" == "1" ]]; then fastest="${lp_speed:-0}"; else fastest="${speed:-0}"; fi
+        [[ "$fastest" =~ ^[0-9]+([.][0-9]+)?$ ]] || fastest=0
+        estimate="$(awk "BEGIN {print int($fastest)}")"
+        (( estimate > 0 )) || estimate=1
+        if (( ${#compatible_devices[@]} > 1 )); then
+            capacity="$(find_concurrent_capacity "$accel" "$encoder" "$dev" "$use_low_power" "$estimate")"
+        else
+            capacity="$estimate"
+        fi
         [[ "$capacity" =~ ^[0-9]+$ ]] || capacity=0
-        echo "$LOG_PREFIX   $dev median=${median_speed}x capacity=$capacity" >&2
+        echo "$LOG_PREFIX   $dev speed=${fastest}x verified_capacity=$capacity" >&2
         (( capacity > 0 )) || continue
 
-        if awk "BEGIN {exit !($median_speed > $primary_speed)}"; then
+        if (( capacity > primary_capacity )) || { (( capacity == primary_capacity )) && awk "BEGIN {exit !($fastest > $primary_speed)}"; }; then
             secondary="$primary"
             secondary_capacity="$primary_capacity"
             secondary_speed="$primary_speed"
             primary="$dev"
             primary_capacity="$capacity"
-            primary_speed="$median_speed"
-        elif awk "BEGIN {exit !($median_speed > $secondary_speed)}"; then
+            primary_speed="$fastest"
+        elif (( capacity > secondary_capacity )) || { (( capacity == secondary_capacity )) && awk "BEGIN {exit !($fastest > $secondary_speed)}"; }; then
             secondary="$dev"
             secondary_capacity="$capacity"
-            secondary_speed="$median_speed"
+            secondary_speed="$fastest"
         fi
     done
     QSV_DEVICE="$original_qsv"
@@ -590,7 +676,7 @@ probe_capabilities() {
     echo "DECODE_10BIT='$can_decode_10bit'"
     echo "ENCODE_10BIT='$can_encode_10bit'"
     echo "ENCODERS='$results'"
-    benchmark_dri_capacities "$best_accel" "$best_codec"
+    benchmark_dri_capacities "$best_accel" "$best_codec" "$best_low_power"
 }
 
 load_cache() {
