@@ -338,6 +338,8 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 ./ffmpeg-smart.sh --recache-only
 ```
 
+While a cache-only benchmark is running, the script maintains `.benchmark.lock` beside itself. New normal transcode invocations exit with status 75 instead of competing with the benchmark. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
+
 ## Benchmarking
 
 Quick wrapper benchmark:
