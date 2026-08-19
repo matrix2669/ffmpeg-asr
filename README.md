@@ -216,7 +216,17 @@ Non-AAC or downmixed audio uses `aresample=async=1` to help maintain A/V sync.
 
 On Linux, the scripts enumerate render nodes that actually exist under `/dev/dri/renderD*`. This avoids selecting host sysfs devices that are not mapped into a Docker/LXC container.
 
-When more than one compatible render node is exposed, the capability probe benchmarks each device independently. The benchmark speed is rounded down to a sustainable concurrent-stream capacity, and the two highest-capacity devices become the primary and secondary devices.
+When more than one compatible render node is exposed, the capability probe benchmarks each device independently. It runs three 60-second passes per device, uses the median raw speed to rank them, and rounds that speed down to a sustainable concurrent-stream capacity. The two fastest devices become the primary and secondary devices. Ranking by raw speed means a `4.8x` device is preferred over a `4.1x` device even though both have a rounded capacity of four streams.
+
+The extended comparison runs only when multiple compatible GPUs are visible. A single-GPU system retains the quick five-second probe. The multi-GPU duration and run count can be adjusted when needed:
+
+```bash
+MULTI_GPU_BENCH_DURATION=90 \
+MULTI_GPU_BENCH_RUNS=5 \
+./ffmpeg-smart.sh --recache
+```
+
+The probe sample is looped for the requested duration, so the source file itself does not need to be 60 seconds long.
 
 Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. It selects the device with the lower proportional load:
 
@@ -267,8 +277,10 @@ SUPPORTS_10BIT_ENCODE='true'
 DECODE_10BIT='qsv=1;vaapi=1;'
 ENCODE_10BIT='qsv=1;vaapi=1;'
 PRIMARY_DEVICE='/dev/dri/renderD129'
+PRIMARY_SPEED='8.62'
 PRIMARY_CAPACITY='8'
 SECONDARY_DEVICE='/dev/dri/renderD128'
+SECONDARY_SPEED='6.35'
 SECONDARY_CAPACITY='6'
 ```
 

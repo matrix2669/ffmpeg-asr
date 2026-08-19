@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="multi-gpu-v12"
+VERSION="multi-gpu-long-bench-v13"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -140,10 +140,11 @@ log_bench_failure() {
 
 bench_encoder() {
     local encoder="$1"
+    local sample_duration="${2:-5}"
+    local synthetic_duration="${3:-2}"
     local pix_fmt="nv12"
     local size="1920x1080"
-    local sample_duration="5"
-    local synthetic_duration="2"
+    local bench_timeout=$((sample_duration + 15))
     local output speed
     local lp_speed=""
     local use_sample="false"
@@ -155,15 +156,15 @@ bench_encoder() {
         *_qsv)
             [[ -n "$QSV_DEVICE" && -e "$QSV_DEVICE" ]] || { echo "0:"; return; }
             if [[ "$use_sample" == "true" ]]; then
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                     -filter_hw_device qsv \
                     -hwaccel qsv -hwaccel_device qsv -hwaccel_output_format qsv \
-                    -i "$PROBE_SAMPLE" -t "$sample_duration" \
+                    -stream_loop -1 -i "$PROBE_SAMPLE" -t "$sample_duration" \
                     -vf "scale_qsv=format=$pix_fmt" -an \
                     -c:v "$encoder" -preset faster $prod_opts -f null - 2>&1 || true)
             else
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                     -filter_hw_device qsv \
                     -f lavfi -i "testsrc2=size=$size:rate=30" -t "$synthetic_duration" \
@@ -173,15 +174,15 @@ bench_encoder() {
             speed=$(parse_bench_speed "$output")
             [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
             if [[ "$use_sample" == "true" ]]; then
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                     -filter_hw_device qsv \
                     -hwaccel qsv -hwaccel_device qsv -hwaccel_output_format qsv \
-                    -i "$PROBE_SAMPLE" -t "$sample_duration" \
+                    -stream_loop -1 -i "$PROBE_SAMPLE" -t "$sample_duration" \
                     -vf "scale_qsv=format=$pix_fmt" -an \
                     -c:v "$encoder" -low_power true $lp_prod_opts -f null - 2>&1 || true)
             else
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -init_hw_device "qsv=qsv:hw,child_device=$QSV_DEVICE" \
                     -filter_hw_device qsv \
                     -f lavfi -i "testsrc2=size=$size:rate=30" -t "$synthetic_duration" \
@@ -193,13 +194,13 @@ bench_encoder() {
         *_vaapi)
             [[ -n "$VAAPI_DEVICE" && -e "$VAAPI_DEVICE" ]] || { echo "0:"; return; }
             if [[ "$use_sample" == "true" ]]; then
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE" \
-                    -i "$PROBE_SAMPLE" -t "$sample_duration" \
+                    -stream_loop -1 -i "$PROBE_SAMPLE" -t "$sample_duration" \
                     -vf "scale_vaapi=format=$pix_fmt" -an \
                     -c:v "$encoder" -rc_mode VBR $prod_opts -f null - 2>&1 || true)
             else
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -vaapi_device "$VAAPI_DEVICE" \
                     -f lavfi -i "testsrc2=size=$size:rate=30" -t "$synthetic_duration" \
                     -vf "format=$pix_fmt,hwupload,scale_vaapi=format=$pix_fmt" \
@@ -208,13 +209,13 @@ bench_encoder() {
             speed=$(parse_bench_speed "$output")
             [[ -n "$speed" ]] || log_bench_failure "$encoder" "$output"
             if [[ "$use_sample" == "true" ]]; then
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$VAAPI_DEVICE" \
-                    -i "$PROBE_SAMPLE" -t "$sample_duration" \
+                    -stream_loop -1 -i "$PROBE_SAMPLE" -t "$sample_duration" \
                     -vf "scale_vaapi=format=$pix_fmt" -an \
                     -c:v "$encoder" -rc_mode VBR -low_power 1 $lp_prod_opts -f null - 2>&1 || true)
             else
-                output=$(timeout 15s ffmpeg -nostdin -hide_banner -benchmark \
+                output=$(timeout "${bench_timeout}s" ffmpeg -nostdin -hide_banner -benchmark \
                     -vaapi_device "$VAAPI_DEVICE" \
                     -f lavfi -i "testsrc2=size=$size:rate=30" -t "$synthetic_duration" \
                     -vf "format=$pix_fmt,hwupload,scale_vaapi=format=$pix_fmt" \
@@ -362,15 +363,21 @@ benchmark_dri_capacities() {
     local original_qsv="$QSV_DEVICE"
     local original_vaapi="$VAAPI_DEVICE"
     local encoder="${codec}_${accel}"
-    local dev vendor result speed lp_speed fastest capacity
+    local dev vendor result speed lp_speed fastest capacity median_speed
+    local duration=5 runs=1 run
     local primary="" secondary="" primary_capacity=0 secondary_capacity=0
+    local primary_speed=0 secondary_speed=0
+    local -a compatible_devices=()
+    local -a run_speeds=()
 
     case "$accel" in
         qsv|vaapi) ;;
         *)
             echo "PRIMARY_DEVICE=''"
+            echo "PRIMARY_SPEED='0'"
             echo "PRIMARY_CAPACITY='0'"
             echo "SECONDARY_DEVICE=''"
+            echo "SECONDARY_SPEED='0'"
             echo "SECONDARY_CAPACITY='0'"
             return
             ;;
@@ -381,34 +388,61 @@ benchmark_dri_capacities() {
         vendor="$(get_dri_vendor "$dev" || true)"
         if [[ "$accel" == "qsv" && "$vendor" != "0x8086" ]]; then continue; fi
         if [[ "$accel" == "vaapi" && "$vendor" != "0x8086" && "$vendor" != "0x1002" ]]; then continue; fi
+        compatible_devices+=("$dev")
+    done
 
+    if (( ${#compatible_devices[@]} > 1 )); then
+        duration="${MULTI_GPU_BENCH_DURATION:-60}"
+        runs="${MULTI_GPU_BENCH_RUNS:-3}"
+        if [[ ! "$duration" =~ ^[1-9][0-9]*$ || ! "$runs" =~ ^[1-9][0-9]*$ ]]; then
+            echo "$LOG_PREFIX WARNING: Invalid multi-GPU benchmark settings; using 60 seconds and 3 runs" >&2
+            duration=60
+            runs=3
+        fi
+        echo "$LOG_PREFIX Multi-GPU comparison: ${duration}s x ${runs} runs per device" >&2
+    fi
+
+    for dev in "${compatible_devices[@]}"; do
         [[ "$accel" == "qsv" ]] && QSV_DEVICE="$dev" || VAAPI_DEVICE="$dev"
-        echo "$LOG_PREFIX Measuring $encoder capacity on $dev..." >&2
-        result="$(bench_encoder "$encoder")"
-        speed="${result%%:*}"
-        lp_speed="${result##*:}"
-        fastest="${speed:-0}"
-        if [[ -n "$lp_speed" ]] && awk "BEGIN {exit !($lp_speed > $fastest)}"; then fastest="$lp_speed"; fi
-        capacity="$(awk "BEGIN {print int($fastest)}")"
+        run_speeds=()
+        for ((run = 1; run <= runs; run++)); do
+            echo "$LOG_PREFIX Measuring $encoder on $dev (run $run/$runs, ${duration}s)..." >&2
+            result="$(bench_encoder "$encoder" "$duration" "$duration")"
+            speed="${result%%:*}"
+            lp_speed="${result##*:}"
+            fastest="${speed:-0}"
+            if [[ -n "$lp_speed" ]] && awk "BEGIN {exit !($lp_speed > $fastest)}"; then fastest="$lp_speed"; fi
+            [[ "$fastest" =~ ^[0-9]+([.][0-9]+)?$ ]] || fastest=0
+            run_speeds+=("$fastest")
+            echo "$LOG_PREFIX   $dev run $run speed=${fastest}x" >&2
+        done
+        median_speed="$(printf '%s\n' "${run_speeds[@]}" | sort -n | awk '{v[NR]=$1} END {if (NR % 2) print v[(NR+1)/2]; else printf "%.3f\n", (v[NR/2] + v[NR/2+1]) / 2}')"
+        capacity="$(awk "BEGIN {print int($median_speed)}")"
         [[ "$capacity" =~ ^[0-9]+$ ]] || capacity=0
+        echo "$LOG_PREFIX   $dev median=${median_speed}x capacity=$capacity" >&2
         (( capacity > 0 )) || continue
 
-        if (( capacity > primary_capacity )); then
+        if awk "BEGIN {exit !($median_speed > $primary_speed)}"; then
             secondary="$primary"
             secondary_capacity="$primary_capacity"
+            secondary_speed="$primary_speed"
             primary="$dev"
             primary_capacity="$capacity"
-        elif (( capacity > secondary_capacity )); then
+            primary_speed="$median_speed"
+        elif awk "BEGIN {exit !($median_speed > $secondary_speed)}"; then
             secondary="$dev"
             secondary_capacity="$capacity"
+            secondary_speed="$median_speed"
         fi
     done
     QSV_DEVICE="$original_qsv"
     VAAPI_DEVICE="$original_vaapi"
 
     echo "PRIMARY_DEVICE='$primary'"
+    echo "PRIMARY_SPEED='$primary_speed'"
     echo "PRIMARY_CAPACITY='$primary_capacity'"
     echo "SECONDARY_DEVICE='$secondary'"
+    echo "SECONDARY_SPEED='$secondary_speed'"
     echo "SECONDARY_CAPACITY='$secondary_capacity'"
 }
 
