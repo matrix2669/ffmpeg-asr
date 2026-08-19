@@ -340,6 +340,8 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 
 While a cache-only benchmark is running, the script maintains `.benchmark.lock` beside itself. New normal transcode invocations exit with status 75 instead of competing with the benchmark. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
 
+`-i pipe:0` and `-i -` are supported for live pipeline integrations such as Dispatcharr Output Profiles. The wrapper captures up to four seconds of the pipe for probing, then prepends that exact sample to the remaining input before starting FFmpeg so probe data is not lost.
+
 ## Benchmarking
 
 Quick wrapper benchmark:
