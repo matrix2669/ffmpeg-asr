@@ -216,19 +216,19 @@ Non-AAC or downmixed audio uses `aresample=async=1` to help maintain A/V sync.
 
 On Linux, the scripts enumerate render nodes that actually exist under `/dev/dri/renderD*`. This avoids selecting host sysfs devices that are not mapped into a Docker/LXC container.
 
-When more than one compatible render node is exposed, the capability probe measures real concurrent-stream capacity on each device independently. It first measures single-stream speed to choose a starting point, then launches that many simultaneous real-time transcodes. Ten-second tests bracket the stable/unstable boundary, followed by 30-second confirmation at the highest stable level and the next level. Every stream must finish successfully and maintain at least `0.95x` speed.
+When more than one compatible render node is exposed, the capability probe measures real concurrent-stream capacity on each device independently. It first measures single-stream speed to choose a starting point, then launches that many simultaneous unthrottled transcodes. Ten-second wall-clock stress tests bracket the stable/unstable boundary, followed by 30-second confirmation at the highest stable level and the next level. Every stream must maintain at least `1.2x` speed, preserving 20% throughput headroom to reduce buffering risk.
 
 The extended concurrency test runs only when multiple compatible GPUs are visible. A single-GPU system retains the quick five-second throughput estimate. Concurrency settings can be adjusted when needed:
 
 ```bash
 CONCURRENCY_SHORT_DURATION=15 \
 CONCURRENCY_CONFIRM_DURATION=45 \
-CONCURRENCY_MIN_SPEED=0.97 \
+CONCURRENCY_MIN_SPEED=1.25 \
 CONCURRENCY_MAX_STREAMS=48 \
 ./ffmpeg-smart.sh --recache
 ```
 
-The probe sample is looped independently for every concurrent worker, so the source file itself does not need to match the test duration.
+The probe sample is looped independently for every concurrent worker, so the source file itself does not need to match the test duration. Workers run without real-time input throttling; otherwise their reported speed would be capped near `1.0x` and could not prove the configured headroom.
 
 Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. Jobs launched by `ffmpeg-smart.sh` expose their input dimensions, output dimensions, and exact fractional frame rate through inherited environment markers. Each job is converted to 1080p30-equivalent load:
 

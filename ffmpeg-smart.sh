@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="concurrent-capacity-v15"
+VERSION="concurrent-headroom-v16"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -398,11 +398,12 @@ test_10bit_decode() {
 run_concurrency_level() {
     local accel="$1" encoder="$2" device="$3" use_low_power="$4"
     local streams="$5" duration="$6"
-    local min_speed="${CONCURRENCY_MIN_SPEED:-0.95}"
-    local work_dir i pid status=0 speed
+    local min_speed="${CONCURRENCY_MIN_SPEED:-1.2}"
+    local work_dir i pid wait_status status=0 speed observed_min=""
     local -a pids=()
     local -a cmd=()
 
+    [[ "$min_speed" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "$LOG_PREFIX ERROR: Invalid CONCURRENCY_MIN_SPEED: $min_speed" >&2; return 1; }
     work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ffmpeg-smart-concurrency.XXXXXX")"
     for ((i = 1; i <= streams; i++)); do
         case "$accel" in
@@ -410,7 +411,7 @@ run_concurrency_level() {
                 cmd=(ffmpeg -nostdin -hide_banner -v error -nostats
                     -init_hw_device "qsv=qsv:hw,child_device=$device" -filter_hw_device qsv
                     -hwaccel qsv -hwaccel_device qsv -hwaccel_output_format qsv
-                    -re -stream_loop -1 -i "$PROBE_SAMPLE" -t "$duration"
+                    -stream_loop -1 -i "$PROBE_SAMPLE"
                     -vf scale_qsv=format=nv12 -an -c:v "$encoder")
                 if [[ "$use_low_power" == "1" ]]; then
                     cmd+=(-low_power true -look_ahead 0 -bf 0)
@@ -421,7 +422,7 @@ run_concurrency_level() {
             vaapi)
                 cmd=(ffmpeg -nostdin -hide_banner -v error -nostats
                     -hwaccel vaapi -hwaccel_output_format vaapi -vaapi_device "$device"
-                    -re -stream_loop -1 -i "$PROBE_SAMPLE" -t "$duration"
+                    -stream_loop -1 -i "$PROBE_SAMPLE"
                     -vf scale_vaapi=format=nv12 -an -c:v "$encoder" -rc_mode VBR)
                 if [[ "$use_low_power" == "1" ]]; then cmd+=(-low_power 1 -bf 0); else cmd+=(-bf 2); fi
                 ;;
@@ -429,18 +430,27 @@ run_concurrency_level() {
         esac
         cmd+=(-b:v 8M -maxrate 10M -bufsize 16M -g 30
             -progress "$work_dir/progress.$i" -f null -)
-        timeout "$((duration + 15))s" "${cmd[@]}" > /dev/null 2>"$work_dir/error.$i" &
+        timeout "${duration}s" "${cmd[@]}" > /dev/null 2>"$work_dir/error.$i" &
         pids+=("$!")
     done
 
-    for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+    for pid in "${pids[@]}"; do
+        if wait "$pid"; then wait_status=0; else wait_status=$?; fi
+        # timeout(1) ending the intentionally unbounded worker is expected.
+        [[ "$wait_status" == "124" || "$wait_status" == "143" ]] || status=1
+    done
     for ((i = 1; i <= streams; i++)); do
         speed="$(sed -n 's/^speed=\([0-9.]*\)x$/\1/p' "$work_dir/progress.$i" 2>/dev/null | tail -1)"
         if [[ ! "$speed" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk "BEGIN {exit !($speed >= $min_speed)}"; then
             status=1
             echo "$LOG_PREFIX   stream $i unstable speed=${speed:-missing}x" >&2
+        elif [[ -z "$observed_min" ]] || awk "BEGIN {exit !($speed < $observed_min)}"; then
+            observed_min="$speed"
         fi
     done
+    if [[ "$status" == "0" ]]; then
+        echo "$LOG_PREFIX   $streams streams stable minimum=${observed_min}x required=${min_speed}x" >&2
+    fi
     rm -rf "$work_dir"
     return "$status"
 }
