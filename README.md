@@ -13,6 +13,7 @@ Key features:
 - Real-media capability benchmarking
 - Automatic QSV, VAAPI, NVENC, VideoToolbox, V4L2 M2M, or software selection
 - Linux `/dev/dri/renderD*` discovery for Docker/LXC environments
+- Capacity-aware selection between the two fastest visible DRM render nodes
 - Per-accelerator 10-bit decode/encode capability tracking
 - HEVC Main10/P010 preservation when allowed
 - Optional maximum resolution, bitrate, and audio-channel limits
@@ -215,7 +216,43 @@ Non-AAC or downmixed audio uses `aresample=async=1` to help maintain A/V sync.
 
 On Linux, the scripts enumerate render nodes that actually exist under `/dev/dri/renderD*`. This avoids selecting host sysfs devices that are not mapped into a Docker/LXC container.
 
-By default, the first exposed Intel/AMD render node is selected. Device selection can be overridden:
+When more than one compatible render node is exposed, the capability probe measures real concurrent-stream capacity on each device independently. It first measures single-stream speed to choose a starting point, then launches that many simultaneous unthrottled transcodes. Ten-second wall-clock stress tests bracket the stable/unstable boundary, followed by 30-second confirmation at the highest stable level and the next level. Every stream must maintain at least `1.2x` speed, preserving 20% throughput headroom to reduce buffering risk.
+
+The extended concurrency test runs only when multiple compatible GPUs are visible. A single-GPU system retains the quick five-second throughput estimate. Concurrency settings can be adjusted when needed:
+
+```bash
+CONCURRENCY_SHORT_DURATION=15 \
+CONCURRENCY_CONFIRM_DURATION=45 \
+CONCURRENCY_MIN_SPEED=1.25 \
+CONCURRENCY_MAX_STREAMS=48 \
+./ffmpeg-smart.sh --recache
+```
+
+The probe sample is looped independently for every concurrent worker, so the source file itself does not need to match the test duration. Workers run without real-time input throttling; otherwise their reported speed would be capped near `1.0x` and could not prove the configured headroom.
+
+Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. Jobs launched by `ffmpeg-smart.sh` expose their input dimensions, output dimensions, and exact fractional frame rate through inherited environment markers. Each job is converted to 1080p30-equivalent load:
+
+```text
+job load = max(input pixel rate, output pixel rate) / 1080p30 pixel rate
+GPU utilization = total weighted job load / verified concurrent capacity
+```
+
+Typical weights are:
+
+| Transcode | 1080p30 units |
+|-----------|---------------|
+| 720p30 → 720p30 | 0.44 |
+| 720p60 → 720p60 | 0.89 |
+| 1080p30 → 720p30 | 1.00 |
+| 1080p60 → 1080p60 | 2.00 |
+| 4K30 → 1080p30 | 4.00 |
+| 4K60 → 4K60 | 8.00 |
+
+Input size accounts for decode work, while output size accounts for encode work and upscaling. The larger pixel rate is used as a conservative single load value. Fractional rates such as `60000/1001` are retained. An external FFmpeg process without the markers counts as one 1080p30 unit.
+
+The device with lower proportional utilization is selected, and equal utilization favors the primary. Verified concurrent capacity is the denominator; single-stream speed breaks ties between devices with the same verified capacity. Only processes visible in the script's PID namespace can be counted, so a normal Docker container will not see FFmpeg jobs in unrelated containers or on the host.
+
+Automatic selection is self-contained: it does not require shared state, lock files, or GPU monitoring services. Device selection can still be overridden:
 
 ```bash
 DRI_DEVICE=/dev/dri/renderD129 ./ffmpeg-smart.sh -i "stream_url"
@@ -231,6 +268,8 @@ VAAPI_DEVICE=/dev/dri/renderD130 \
 
 `DRI_DEVICE` supplies the shared default. `QSV_DEVICE` and `VAAPI_DEVICE` take precedence when explicitly set.
 
+Any explicit applicable override bypasses automatic multi-GPU selection. The selected device and the active/capacity values used for the decision are written to stderr.
+
 ## Capability caching
 
 On a capability probe, the script:
@@ -240,7 +279,8 @@ On a capability probe, the script:
 3. Benchmarks available H264/HEVC encoders.
 4. Tests normal and low-power modes where supported.
 5. Tracks 10-bit decode and encode capability per accelerator.
-6. Stores the fastest working fallback transcode path in `.capabilities.cache`.
+6. Finds and confirms real concurrent-stream capacity on every compatible DRM render node.
+7. Stores the fastest working fallback path and primary/secondary device capacities in `.capabilities.cache`.
 
 Example:
 
@@ -252,11 +292,23 @@ SUPPORTS_10BIT_DECODE='true'
 SUPPORTS_10BIT_ENCODE='true'
 DECODE_10BIT='qsv=1;vaapi=1;'
 ENCODE_10BIT='qsv=1;vaapi=1;'
+PRIMARY_DEVICE='/dev/dri/renderD129'
+PRIMARY_SPEED='8.62'
+PRIMARY_CAPACITY='8'
+SECONDARY_DEVICE='/dev/dri/renderD128'
+SECONDARY_SPEED='6.35'
+SECONDARY_CAPACITY='6'
 ```
 
 The cache describes the preferred transcode path; it does not mean every input is transcoded.
 
-The cache fingerprint includes the script version, exposed DRI devices, selected device overrides, and detected GPU hardware. Capability-changing script updates therefore invalidate an older cache automatically. Use `--recache` to force a fresh probe manually.
+The cache fingerprint includes the script version, exposed DRI render-node mapping, GPU vendor/device/revision/subsystem IDs, and selected device overrides. A relevant script, GPU hardware, or render-node mapping change invalidates the active cache automatically. Capacity results are also stored per hardware signature, independent of render-node number, accelerator choice, codec, and low-power mode.
+
+When the visible hardware set changes, matching per-device results are reused and only new or changed GPUs receive the concurrency benchmark. For example, moving from an A310 plus an Intel iGPU to an otherwise equivalent system exposing only the same iGPU reuses the iGPU capacity, drops the absent A310 entry, and rebuilds primary/secondary ordering without another saturation test. Moving to equivalent GPU hardware also reuses matching results even when host identity, kernel, driver version, or PCI location differs.
+
+Render-node renumbering is handled the same way. If a reboot swaps the devices previously exposed as `renderD128` and `renderD129`, the changed node-to-hardware mapping invalidates the active selection, both hardware-keyed capacity results are reused, and primary/secondary devices are reassigned to their new render-node paths without rerunning the concurrency benchmark.
+
+Use `--recache` to deliberately discard reusable results and retest every visible device.
 
 ## Benchmarking
 
