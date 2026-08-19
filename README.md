@@ -13,6 +13,7 @@ Key features:
 - Real-media capability benchmarking
 - Automatic QSV, VAAPI, NVENC, VideoToolbox, V4L2 M2M, or software selection
 - Linux `/dev/dri/renderD*` discovery for Docker/LXC environments
+- Capacity-aware selection between the two fastest visible DRM render nodes
 - Per-accelerator 10-bit decode/encode capability tracking
 - HEVC Main10/P010 preservation when allowed
 - Optional maximum resolution, bitrate, and audio-channel limits
@@ -215,7 +216,17 @@ Non-AAC or downmixed audio uses `aresample=async=1` to help maintain A/V sync.
 
 On Linux, the scripts enumerate render nodes that actually exist under `/dev/dri/renderD*`. This avoids selecting host sysfs devices that are not mapped into a Docker/LXC container.
 
-By default, the first exposed Intel/AMD render node is selected. Device selection can be overridden:
+When more than one compatible render node is exposed, the capability probe benchmarks each device independently. The benchmark speed is rounded down to a sustainable concurrent-stream capacity, and the two highest-capacity devices become the primary and secondary devices.
+
+Before starting a hardware transcode, the script inspects visible `ffmpeg` processes under `/proc` and determines which DRM render node each process has open. It selects the device with the lower proportional load:
+
+```text
+load = active ffmpeg jobs / benchmarked device capacity
+```
+
+For example, a primary device with 3 active jobs and capacity 8 (37.5%) is preferred over a secondary with 3 active jobs and capacity 6 (50%). Equal loads favor the primary device. Only processes visible in the script's PID namespace can be counted, so a normal Docker container will not see FFmpeg jobs in unrelated containers or on the host.
+
+Automatic selection is self-contained: it does not require shared state, lock files, or GPU monitoring services. Device selection can still be overridden:
 
 ```bash
 DRI_DEVICE=/dev/dri/renderD129 ./ffmpeg-smart.sh -i "stream_url"
@@ -231,6 +242,8 @@ VAAPI_DEVICE=/dev/dri/renderD130 \
 
 `DRI_DEVICE` supplies the shared default. `QSV_DEVICE` and `VAAPI_DEVICE` take precedence when explicitly set.
 
+Any explicit applicable override bypasses automatic multi-GPU selection. The selected device and the active/capacity values used for the decision are written to stderr.
+
 ## Capability caching
 
 On a capability probe, the script:
@@ -240,7 +253,8 @@ On a capability probe, the script:
 3. Benchmarks available H264/HEVC encoders.
 4. Tests normal and low-power modes where supported.
 5. Tracks 10-bit decode and encode capability per accelerator.
-6. Stores the fastest working fallback transcode path in `.capabilities.cache`.
+6. Benchmarks the selected QSV/VAAPI path on every compatible DRM render node.
+7. Stores the fastest working fallback path and primary/secondary device capacities in `.capabilities.cache`.
 
 Example:
 
@@ -252,6 +266,10 @@ SUPPORTS_10BIT_DECODE='true'
 SUPPORTS_10BIT_ENCODE='true'
 DECODE_10BIT='qsv=1;vaapi=1;'
 ENCODE_10BIT='qsv=1;vaapi=1;'
+PRIMARY_DEVICE='/dev/dri/renderD129'
+PRIMARY_CAPACITY='8'
+SECONDARY_DEVICE='/dev/dri/renderD128'
+SECONDARY_CAPACITY='6'
 ```
 
 The cache describes the preferred transcode path; it does not mean every input is transcoded.

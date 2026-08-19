@@ -4,11 +4,17 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="render-node-v11"
+VERSION="multi-gpu-v12"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
 
+DRI_DEVICE_WAS_SET=false
+VAAPI_DEVICE_WAS_SET=false
+QSV_DEVICE_WAS_SET=false
+[[ -n "${DRI_DEVICE:-}" ]] && DRI_DEVICE_WAS_SET=true
+[[ -n "${VAAPI_DEVICE:-}" ]] && VAAPI_DEVICE_WAS_SET=true
+[[ -n "${QSV_DEVICE:-}" ]] && QSV_DEVICE_WAS_SET=true
 DRI_DEVICE="${DRI_DEVICE:-}"
 VAAPI_DEVICE="${VAAPI_DEVICE:-}"
 QSV_DEVICE="${QSV_DEVICE:-}"
@@ -40,6 +46,49 @@ auto_select_dri_device() {
         return 0
     fi
     return 1
+}
+
+count_ffmpeg_jobs_on_device() {
+    local device="$1"
+    local proc pid fd target count=0
+    for proc in /proc/[0-9]*; do
+        [[ -r "$proc/comm" ]] || continue
+        read -r pid < "$proc/comm" || continue
+        [[ "$pid" == "ffmpeg" ]] || continue
+        for fd in "$proc"/fd/*; do
+            [[ -e "$fd" ]] || continue
+            target="$(readlink "$fd" 2>/dev/null || true)"
+            if [[ "$target" == "$device" || "$target" == "$device (deleted)" ]]; then
+                count=$((count + 1))
+                break
+            fi
+        done
+    done
+    echo "$count"
+}
+
+select_least_loaded_dri_device() {
+    local primary="${PRIMARY_DEVICE:-}"
+    local secondary="${SECONDARY_DEVICE:-}"
+    local primary_capacity="${PRIMARY_CAPACITY:-0}"
+    local secondary_capacity="${SECONDARY_CAPACITY:-0}"
+    local primary_jobs secondary_jobs selected
+
+    [[ -n "$primary" && -e "$primary" && "$primary_capacity" =~ ^[1-9][0-9]*$ ]] || return 1
+    if [[ -z "$secondary" || ! -e "$secondary" || ! "$secondary_capacity" =~ ^[1-9][0-9]*$ ]]; then
+        echo "$primary"
+        return 0
+    fi
+
+    primary_jobs="$(count_ffmpeg_jobs_on_device "$primary")"
+    secondary_jobs="$(count_ffmpeg_jobs_on_device "$secondary")"
+    selected="$primary"
+    # Compare the fractions without floating point. A tie deliberately favors primary.
+    if (( secondary_jobs * primary_capacity < primary_jobs * secondary_capacity )); then
+        selected="$secondary"
+    fi
+    echo "$LOG_PREFIX GPU load: primary=$primary_jobs/$primary_capacity secondary=$secondary_jobs/$secondary_capacity selected=$selected" >&2
+    echo "$selected"
 }
 
 if [[ "$(uname -s)" == "Linux" ]]; then
@@ -307,6 +356,62 @@ test_10bit_decode() {
         -f null - 2>/dev/null
 }
 
+benchmark_dri_capacities() {
+    local accel="$1"
+    local codec="$2"
+    local original_qsv="$QSV_DEVICE"
+    local original_vaapi="$VAAPI_DEVICE"
+    local encoder="${codec}_${accel}"
+    local dev vendor result speed lp_speed fastest capacity
+    local primary="" secondary="" primary_capacity=0 secondary_capacity=0
+
+    case "$accel" in
+        qsv|vaapi) ;;
+        *)
+            echo "PRIMARY_DEVICE=''"
+            echo "PRIMARY_CAPACITY='0'"
+            echo "SECONDARY_DEVICE=''"
+            echo "SECONDARY_CAPACITY='0'"
+            return
+            ;;
+    esac
+
+    for dev in /dev/dri/renderD*; do
+        [[ -e "$dev" ]] || continue
+        vendor="$(get_dri_vendor "$dev" || true)"
+        if [[ "$accel" == "qsv" && "$vendor" != "0x8086" ]]; then continue; fi
+        if [[ "$accel" == "vaapi" && "$vendor" != "0x8086" && "$vendor" != "0x1002" ]]; then continue; fi
+
+        [[ "$accel" == "qsv" ]] && QSV_DEVICE="$dev" || VAAPI_DEVICE="$dev"
+        echo "$LOG_PREFIX Measuring $encoder capacity on $dev..." >&2
+        result="$(bench_encoder "$encoder")"
+        speed="${result%%:*}"
+        lp_speed="${result##*:}"
+        fastest="${speed:-0}"
+        if [[ -n "$lp_speed" ]] && awk "BEGIN {exit !($lp_speed > $fastest)}"; then fastest="$lp_speed"; fi
+        capacity="$(awk "BEGIN {print int($fastest)}")"
+        [[ "$capacity" =~ ^[0-9]+$ ]] || capacity=0
+        (( capacity > 0 )) || continue
+
+        if (( capacity > primary_capacity )); then
+            secondary="$primary"
+            secondary_capacity="$primary_capacity"
+            primary="$dev"
+            primary_capacity="$capacity"
+        elif (( capacity > secondary_capacity )); then
+            secondary="$dev"
+            secondary_capacity="$capacity"
+        fi
+    done
+    QSV_DEVICE="$original_qsv"
+    VAAPI_DEVICE="$original_vaapi"
+
+    echo "PRIMARY_DEVICE='$primary'"
+    echo "PRIMARY_CAPACITY='$primary_capacity'"
+    echo "SECONDARY_DEVICE='$secondary'"
+    echo "SECONDARY_CAPACITY='$secondary_capacity'"
+}
+
 probe_capabilities() {
     local results=""
     local encoders_list
@@ -405,6 +510,7 @@ probe_capabilities() {
     echo "DECODE_10BIT='$can_decode_10bit'"
     echo "ENCODE_10BIT='$can_encode_10bit'"
     echo "ENCODERS='$results'"
+    benchmark_dri_capacities "$best_accel" "$best_codec"
 }
 
 load_cache() {
@@ -552,6 +658,26 @@ fi
 if [[ "$ACCEL" == "__auto__" ]]; then
     ACCEL="${BEST_ACCEL:-}"
     [[ -z "$ACCEL" ]] && ACCEL=$(detect_accel)
+fi
+
+# Explicit device settings always win. Otherwise use the cached per-device
+# benchmark and the ffmpeg processes visible in this PID namespace.
+if [[ "$(uname -s)" == "Linux" && "$DRI_DEVICE_WAS_SET" == "false" ]]; then
+    SELECTED_DRI_DEVICE=""
+    case "$ACCEL" in
+        qsv)
+            if [[ "$QSV_DEVICE_WAS_SET" == "false" ]]; then
+                SELECTED_DRI_DEVICE="$(select_least_loaded_dri_device || true)"
+                [[ -n "$SELECTED_DRI_DEVICE" ]] && QSV_DEVICE="$SELECTED_DRI_DEVICE"
+            fi
+            ;;
+        vaapi)
+            if [[ "$VAAPI_DEVICE_WAS_SET" == "false" ]]; then
+                SELECTED_DRI_DEVICE="$(select_least_loaded_dri_device || true)"
+                [[ -n "$SELECTED_DRI_DEVICE" ]] && VAAPI_DEVICE="$SELECTED_DRI_DEVICE"
+            fi
+            ;;
+    esac
 fi
 
 SELECTED_SUPPORTS_10BIT_DECODE=false
