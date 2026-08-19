@@ -4,7 +4,7 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="cli-device-override-v19"
+VERSION="recache-only-v20"
 CAPACITY_BENCHMARK_VERSION="concurrency-1.2-v1"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
@@ -829,6 +829,7 @@ MAX_BITRATE=""
 FORCE_SDR=false
 FORCE_DEINT=false
 RECACHE=false
+RECACHE_ONLY=false
 ACCEL="__auto__"
 
 detect_accel() {
@@ -874,6 +875,7 @@ while [[ $# -gt 0 ]]; do
         -sdr) FORCE_SDR=true; shift ;;
         -deint|-deinterlace) FORCE_DEINT=true; shift ;;
         --recache) RECACHE=true; shift ;;
+        --recache-only) RECACHE=true; RECACHE_ONLY=true; shift ;;
         *) shift ;;
     esac
 done
@@ -903,6 +905,11 @@ if [[ "$RECACHE" == "true" ]] || ! load_cache 2>/dev/null; then
     echo "$LOG_PREFIX v$VERSION | Probed: accel=$BEST_ACCEL codec=$BEST_CODEC 10bit=$SUPPORTS_10BIT_ENCODE hdr=$SUPPORTS_10BIT_ENCODE" >&2
 else
     echo "$LOG_PREFIX v$VERSION | Cached: accel=$BEST_ACCEL codec=$BEST_CODEC 10bit=$SUPPORTS_10BIT_ENCODE hdr=$SUPPORTS_10BIT_ENCODE" >&2
+fi
+
+if [[ "$RECACHE_ONLY" == "true" ]]; then
+    echo "$LOG_PREFIX Cache rebuild complete" >&2
+    exit 0
 fi
 
 [[ -z "$VCODEC_OUT" ]] && VCODEC_OUT="${BEST_CODEC:-h264}"

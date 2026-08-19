@@ -52,6 +52,7 @@ The normalized MPEG-TS stream is written to stdout.
 | `-deint` | unset | Require progressive output for detected interlaced video |
 | `-deinterlace` | unset | Alias for `-deint` |
 | `--recache` | | Force a fresh capability probe |
+| `--recache-only` | | Rebuild the capability/capacity cache and exit without requiring an input stream |
 
 `-maxres`, `-maxbr`/`-maxbitrate`, `-maxchan`, `-sdr`, and `-deint` are independent optional constraints. Any one can be used by itself, or they can be combined.
 
@@ -330,6 +331,12 @@ When the visible hardware set changes, matching per-device results are reused an
 Render-node renumbering is handled the same way. If a reboot swaps the devices previously exposed as `renderD128` and `renderD129`, the changed node-to-hardware mapping invalidates the active selection, both hardware-keyed capacity results are reused, and primary/secondary devices are reassigned to their new render-node paths without rerunning the concurrency benchmark.
 
 Use `--recache` to deliberately discard reusable results and retest every visible device.
+
+For automation or plugin-triggered maintenance, use `--recache-only`. It performs the same forced rebuild but exits successfully as soon as the cache is complete, without requiring `-i`:
+
+```bash
+./ffmpeg-smart.sh --recache-only
+```
 
 ## Benchmarking
 
