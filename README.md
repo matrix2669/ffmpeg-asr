@@ -37,6 +37,10 @@ The normalized MPEG-TS stream is written to stdout.
 | `-i` | required | Input URL or file |
 | `-user_agent` | | User agent for HTTP streams |
 | `-accel` | auto | Acceleration used when transcoding is required: `qsv`, `vaapi`, `nvenc`, `videotoolbox`, `v4l2m2m`, `software` |
+| `-device` | auto | Explicit shared DRM render node for QSV/VAAPI; bypasses automatic multi-GPU selection |
+| `-dri-device` | auto | Alias for `-device` |
+| `-qsv-device` | auto | Explicit QSV DRM render node |
+| `-vaapi-device` | auto | Explicit VAAPI DRM render node |
 | `-vc` | auto | Target video codec: `h264` or `hevc`; auto uses `BEST_CODEC` from the capability cache |
 | `-10bit` | auto | Enable 10-bit output; auto follows the selected accelerator's proven capability |
 | `-hdr` | auto | Enable HDR output; auto follows the selected HEVC/10-bit capability |
@@ -255,10 +259,25 @@ The device with lower proportional utilization is selected, and equal utilizatio
 Automatic selection is self-contained: it does not require shared state, lock files, or GPU monitoring services. Device selection can still be overridden:
 
 ```bash
+./ffmpeg-smart.sh -device /dev/dri/renderD129 -i "stream_url"
+```
+
+or independently by accelerator:
+
+```bash
+./ffmpeg-smart.sh \
+  -qsv-device /dev/dri/renderD129 \
+  -vaapi-device /dev/dri/renderD130 \
+  -i "stream_url"
+```
+
+Environment variables remain supported:
+
+```bash
 DRI_DEVICE=/dev/dri/renderD129 ./ffmpeg-smart.sh -i "stream_url"
 ```
 
-or independently:
+or independently by accelerator:
 
 ```bash
 QSV_DEVICE=/dev/dri/renderD129 \
@@ -267,6 +286,8 @@ VAAPI_DEVICE=/dev/dri/renderD130 \
 ```
 
 `DRI_DEVICE` supplies the shared default. `QSV_DEVICE` and `VAAPI_DEVICE` take precedence when explicitly set.
+
+CLI device options take precedence over environment values. When multiple CLI device options are supplied, later options override earlier ones, allowing a shared `-device` followed by an accelerator-specific exception.
 
 Any explicit applicable override bypasses automatic multi-GPU selection. The selected device and the active/capacity values used for the decision are written to stderr.
 
