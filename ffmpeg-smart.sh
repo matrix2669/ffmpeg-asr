@@ -4,7 +4,8 @@ set -euo pipefail
 
 LOG_PREFIX="[ffmpeg-smart]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="hardware-fingerprint-v17"
+VERSION="partial-hardware-cache-v18"
+CAPACITY_BENCHMARK_VERSION="concurrency-1.2-v1"
 CACHE_FILE="$SCRIPT_DIR/.capabilities.cache"
 PROBE_SAMPLE="$SCRIPT_DIR/probe-sample.mkv"
 PROBE_SAMPLE_URL="https://repo.jellyfin.org/archive/jellyfish/media/jellyfish-3-mbps-hd-hevc-10bit.mkv"
@@ -25,6 +26,17 @@ get_dri_vendor() {
     local vendor_file="/sys/class/drm/$node/device/vendor"
     [[ -r "$vendor_file" ]] || return 1
     cat "$vendor_file" 2>/dev/null
+}
+
+get_dri_hardware_key() {
+    local dev="$1" node="${dev##*/}"
+    local vendor device revision subsystem_vendor subsystem_device
+    vendor="$(cat "/sys/class/drm/$node/device/vendor" 2>/dev/null || true)"
+    device="$(cat "/sys/class/drm/$node/device/device" 2>/dev/null || true)"
+    revision="$(cat "/sys/class/drm/$node/device/revision" 2>/dev/null || true)"
+    subsystem_vendor="$(cat "/sys/class/drm/$node/device/subsystem_vendor" 2>/dev/null || true)"
+    subsystem_device="$(cat "/sys/class/drm/$node/device/subsystem_device" 2>/dev/null || true)"
+    echo "${vendor:-unknown}:${device:-unknown}:${revision:-unknown}:${subsystem_vendor:-unknown}:${subsystem_device:-unknown}"
 }
 
 auto_select_dri_device() {
@@ -139,16 +151,12 @@ fi
 
 get_hw_fingerprint() {
     local fp="script=$VERSION;"
-    local dev node vendor device revision subsystem_vendor subsystem_device
+    local dev node hardware_key
     for dev in /dev/dri/renderD*; do
         [[ -e "$dev" ]] || continue
         node="${dev##*/}"
-        vendor="$(cat "/sys/class/drm/$node/device/vendor" 2>/dev/null || true)"
-        device="$(cat "/sys/class/drm/$node/device/device" 2>/dev/null || true)"
-        revision="$(cat "/sys/class/drm/$node/device/revision" 2>/dev/null || true)"
-        subsystem_vendor="$(cat "/sys/class/drm/$node/device/subsystem_vendor" 2>/dev/null || true)"
-        subsystem_device="$(cat "/sys/class/drm/$node/device/subsystem_device" 2>/dev/null || true)"
-        fp+="dri:${node}:${vendor:-unknown}:${device:-unknown}:${revision:-unknown}:${subsystem_vendor:-unknown}:${subsystem_device:-unknown};"
+        hardware_key="$(get_dri_hardware_key "$dev")"
+        fp+="dri:${node}:${hardware_key};"
     done
     if [[ "$(uname -s)" == "Linux" ]]; then
         fp+="selected:dri=${DRI_DEVICE:-none},vaapi=${VAAPI_DEVICE:-none},qsv=${QSV_DEVICE:-none};"
@@ -515,6 +523,25 @@ find_concurrent_capacity() {
     echo "$candidate"
 }
 
+lookup_cached_device_benchmark() {
+    local hardware_key="$1" accel="$2" codec="$3" use_low_power="$4"
+    local entry cached_key cached_accel cached_codec cached_lp cached_speed cached_capacity
+    local -a entries=()
+    [[ "${CACHED_CAPACITY_BENCHMARK_VERSION:-}" == "$CAPACITY_BENCHMARK_VERSION" ]] || return 1
+    IFS=';' read -ra entries <<< "${CACHED_DEVICE_BENCHMARKS:-}"
+    for entry in "${entries[@]}"; do
+        [[ -n "$entry" ]] || continue
+        IFS='|' read -r cached_key cached_accel cached_codec cached_lp cached_speed cached_capacity <<< "$entry"
+        if [[ "$cached_key" == "$hardware_key" && "$cached_accel" == "$accel" &&
+              "$cached_codec" == "$codec" && "$cached_lp" == "$use_low_power" &&
+              "$cached_speed" =~ ^[0-9]+([.][0-9]+)?$ && "$cached_capacity" =~ ^[1-9][0-9]*$ ]]; then
+            echo "$cached_speed:$cached_capacity"
+            return 0
+        fi
+    done
+    return 1
+}
+
 benchmark_dri_capacities() {
     local accel="$1"
     local codec="$2"
@@ -522,7 +549,8 @@ benchmark_dri_capacities() {
     local original_qsv="$QSV_DEVICE"
     local original_vaapi="$VAAPI_DEVICE"
     local encoder="${codec}_${accel}"
-    local dev vendor result speed lp_speed fastest capacity estimate
+    local dev vendor hardware_key cached result speed lp_speed fastest capacity estimate
+    local device_benchmarks=""
     local primary="" secondary="" primary_capacity=0 secondary_capacity=0
     local primary_speed=0 secondary_speed=0
     local -a compatible_devices=()
@@ -536,6 +564,7 @@ benchmark_dri_capacities() {
             echo "SECONDARY_DEVICE=''"
             echo "SECONDARY_SPEED='0'"
             echo "SECONDARY_CAPACITY='0'"
+            echo "DEVICE_BENCHMARKS=''"
             return
             ;;
     esac
@@ -550,22 +579,31 @@ benchmark_dri_capacities() {
 
     for dev in "${compatible_devices[@]}"; do
         [[ "$accel" == "qsv" ]] && QSV_DEVICE="$dev" || VAAPI_DEVICE="$dev"
-        echo "$LOG_PREFIX Measuring single-stream $encoder speed on $dev..." >&2
-        result="$(bench_encoder "$encoder")"
-        speed="${result%%:*}"
-        lp_speed="${result##*:}"
-        if [[ "$use_low_power" == "1" ]]; then fastest="${lp_speed:-0}"; else fastest="${speed:-0}"; fi
-        [[ "$fastest" =~ ^[0-9]+([.][0-9]+)?$ ]] || fastest=0
-        estimate="$(awk "BEGIN {print int($fastest)}")"
-        (( estimate > 0 )) || estimate=1
-        if (( ${#compatible_devices[@]} > 1 )); then
-            capacity="$(find_concurrent_capacity "$accel" "$encoder" "$dev" "$use_low_power" "$estimate")"
+        hardware_key="$(get_dri_hardware_key "$dev")"
+        cached="$(lookup_cached_device_benchmark "$hardware_key" "$accel" "$codec" "$use_low_power" || true)"
+        if [[ -n "$cached" ]]; then
+            fastest="${cached%%:*}"
+            capacity="${cached##*:}"
+            echo "$LOG_PREFIX Reusing verified capacity for $dev ($hardware_key): speed=${fastest}x capacity=$capacity" >&2
         else
-            capacity="$estimate"
+            echo "$LOG_PREFIX Measuring single-stream $encoder speed on $dev..." >&2
+            result="$(bench_encoder "$encoder")"
+            speed="${result%%:*}"
+            lp_speed="${result##*:}"
+            if [[ "$use_low_power" == "1" ]]; then fastest="${lp_speed:-0}"; else fastest="${speed:-0}"; fi
+            [[ "$fastest" =~ ^[0-9]+([.][0-9]+)?$ ]] || fastest=0
+            estimate="$(awk "BEGIN {print int($fastest)}")"
+            (( estimate > 0 )) || estimate=1
+            if (( ${#compatible_devices[@]} > 1 )); then
+                capacity="$(find_concurrent_capacity "$accel" "$encoder" "$dev" "$use_low_power" "$estimate")"
+            else
+                capacity="$estimate"
+            fi
         fi
         [[ "$capacity" =~ ^[0-9]+$ ]] || capacity=0
         echo "$LOG_PREFIX   $dev speed=${fastest}x verified_capacity=$capacity" >&2
         (( capacity > 0 )) || continue
+        device_benchmarks+="${hardware_key}|${accel}|${codec}|${use_low_power}|${fastest}|${capacity};"
 
         if (( capacity > primary_capacity )) || { (( capacity == primary_capacity )) && awk "BEGIN {exit !($fastest > $primary_speed)}"; }; then
             secondary="$primary"
@@ -589,6 +627,7 @@ benchmark_dri_capacities() {
     echo "SECONDARY_DEVICE='$secondary'"
     echo "SECONDARY_SPEED='$secondary_speed'"
     echo "SECONDARY_CAPACITY='$secondary_capacity'"
+    echo "DEVICE_BENCHMARKS='$device_benchmarks'"
 }
 
 probe_capabilities() {
@@ -702,10 +741,13 @@ load_cache() {
 }
 
 save_cache() {
+    CACHED_CAPACITY_BENCHMARK_VERSION="${DEVICE_BENCHMARK_VERSION:-}"
+    CACHED_DEVICE_BENCHMARKS="${DEVICE_BENCHMARKS:-}"
     {
         echo "# ffmpeg-smart capability cache"
         echo "# Generated: $(date -Iseconds)"
         echo "HW_FINGERPRINT='$(get_hw_fingerprint)'"
+        echo "DEVICE_BENCHMARK_VERSION='$CAPACITY_BENCHMARK_VERSION'"
         probe_capabilities
     } > "$CACHE_FILE"
     source "$CACHE_FILE"

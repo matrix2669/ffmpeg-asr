@@ -302,7 +302,13 @@ SECONDARY_CAPACITY='6'
 
 The cache describes the preferred transcode path; it does not mean every input is transcoded.
 
-The cache fingerprint includes the script version, exposed DRI render-node mapping, GPU vendor/device/revision/subsystem IDs, and selected device overrides. A relevant script, GPU hardware, or render-node mapping change invalidates the cache and automatically reruns the capability and concurrency benchmarks. Moving the container to a host with equivalent GPU hardware reuses the cache, even when host identity, kernel, driver version, or PCI location differs. Use `--recache` to force a fresh probe manually.
+The cache fingerprint includes the script version, exposed DRI render-node mapping, GPU vendor/device/revision/subsystem IDs, and selected device overrides. A relevant script, GPU hardware, or render-node mapping change invalidates the active cache automatically. Capacity results are also stored per hardware signature, independent of render-node number, accelerator choice, codec, and low-power mode.
+
+When the visible hardware set changes, matching per-device results are reused and only new or changed GPUs receive the concurrency benchmark. For example, moving from an A310 plus an Intel iGPU to an otherwise equivalent system exposing only the same iGPU reuses the iGPU capacity, drops the absent A310 entry, and rebuilds primary/secondary ordering without another saturation test. Moving to equivalent GPU hardware also reuses matching results even when host identity, kernel, driver version, or PCI location differs.
+
+Render-node renumbering is handled the same way. If a reboot swaps the devices previously exposed as `renderD128` and `renderD129`, the changed node-to-hardware mapping invalidates the active selection, both hardware-keyed capacity results are reused, and primary/secondary devices are reassigned to their new render-node paths without rerunning the concurrency benchmark.
+
+Use `--recache` to deliberately discard reusable results and retest every visible device.
 
 ## Benchmarking
 
