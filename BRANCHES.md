@@ -41,5 +41,5 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: allow integrations to store cache and benchmark state outside replaceable source directories, and provide a clear wrapper-identified failure when a required cache is unavailable.
 - Base: `dev` at `d521be2`.
 - Intended target: `dev`.
-- Validation: shell/static checks plus standalone cache-path, missing-cache, recache, lock, and downstream plugin/container tests.
+- Validation: `scripts/validate.sh`, standalone cache-path/missing-cache/recache/lock tests, pinned downstream plugin tests, and installed-container missing/stale-cache behavior pass. Version metadata is prepared for `v1.1.0-beta.1`.
 - Started: `2026-08-22`.

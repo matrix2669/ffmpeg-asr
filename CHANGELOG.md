@@ -4,6 +4,8 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0-beta.1] - 2026-08-22
+
 ### Added
 
 - Add `FFMPEG_SMART_STATE_DIR` for persistent cache, probe-media, and benchmark-lock storage outside replaceable source directories.
@@ -39,4 +41,6 @@ All notable matrix2669 fork changes are documented here.
 
 - Tagged as `v1.0.0` without a GitHub Release or attached ZIP while upstream licensing remains unresolved.
 
+[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.1...HEAD
+[1.1.0-beta.1]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.0.0...v1.1.0-beta.1
 [1.0.0]: https://github.com/matrix2669/ffmpeg-asr/tree/v1.0.0
