@@ -15,7 +15,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
-| `fix/persistent-state-errors` | work | active | `dev` | `dev` | Support consumer-owned persistent state and explicit missing-cache failures. |
 
 ## Branch records
 
@@ -32,14 +31,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: integrate fork-owned feature and fix work before stable promotion.
 - Base: `main` at `1422797653e82034b4726e331fd971969534913c`
 - Intended target: `main`
-- Validation: shell syntax, release metadata, packaging, and hardware/live validation proportionate to behavioral changes.
-- Last verified head: `ed847e8` plus the branch-ledger cleanup that removed completed branch records.
+- Validation: `scripts/validate.sh`, standalone persistent-state/cache failure tests, downstream plugin tests, and installed-container missing/stale-cache behavior pass for `v1.1.0-beta.1`.
+- Last verified head: the tested `v1.1.0-beta.1` source state including persistent-state and required-cache handling.
 - Last verified at: `2026-08-22`
-
-### `fix/persistent-state-errors`
-
-- Purpose: allow integrations to store cache and benchmark state outside replaceable source directories, and provide a clear wrapper-identified failure when a required cache is unavailable.
-- Base: `dev` at `d521be2`.
-- Intended target: `dev`.
-- Validation: `scripts/validate.sh`, standalone cache-path/missing-cache/recache/lock tests, pinned downstream plugin tests, and installed-container missing/stale-cache behavior pass. Version metadata is prepared for `v1.1.0-beta.1`.
-- Started: `2026-08-22`.
