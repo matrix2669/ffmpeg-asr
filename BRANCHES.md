@@ -44,6 +44,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - In scope: `DECISIONS.md` and this branch record.
 - Out of scope: runtime behavior, version changes, tagging, releasing, and downstream source-pin changes.
 - History reviewed: ChatGPT tasks `FFMpeg-ASR`, `FFmpeg Dispatcharr Profile`, `Mobile Streaming Profile Setup`, and `Dispatcharr Xtream Output Profile`; Codex task `Add multi-GPU FFmpeg-ASR selection`; repository commits and PRs; related FFmpeg Smart plugin source-sync and release history; current code and documentation.
-- Validation: pending comparison against the tagged `v1.0.0` implementation and related plugin contract.
+- Validation: reconstructed 15 ADRs from the listed history; compared every decision with the `v1.0.0` implementation, both merged fork pull requests, and the plugin source-pin workflow; confirmed all cited commits resolve; `scripts/validate.sh` and Git whitespace checks pass.
 - Last verified head: `a30bd9342abfff1edcca1724621a192389129a32`.
 - Last verified at: `2026-08-22`.
