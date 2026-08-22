@@ -15,9 +15,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
-| `feature/hybrid-standalone-release` | feature | active | `dev` | `dev`, then `main` | Bootstrap hybrid governance and publish `v1.0.0`. |
-| `agent/capacity-aware-multi-gpu-scheduling` | legacy feature | merged | historical `main` | delete | Retained remote branch for work already present in `main`. |
-| `agent/recache-only` | legacy feature | merged | historical `main` | delete | Retained remote branch whose head already equals `main`. |
 
 ## Branch records
 
@@ -35,30 +32,5 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Base: `main` at `1422797653e82034b4726e331fd971969534913c`
 - Intended target: `main`
 - Validation: shell syntax, release metadata, packaging, and hardware/live validation proportionate to behavioral changes.
-- Last verified head: `1422797653e82034b4726e331fd971969534913c`
-- Last verified at: `2026-08-22T15:25:16Z`
-
-### `feature/hybrid-standalone-release`
-
-- Purpose: add repository-owned guidance, decisions, release history, semantic versioning, reproducible ZIP packaging, and upstream provenance while preserving a clean contribution lane.
-- Base: `dev` at `1422797653e82034b4726e331fd971969534913c`
-- Intended target: `dev`, followed by promotion of the validated release state to `main`.
-- In scope: documentation structure, semantic version metadata, packaging, release validation, `v1.0.0`, and cleanup of contained legacy branches.
-- Out of scope: new transcoding behavior and an upstream pull request.
-- Validation: pending.
-- Last verified head: `1422797653e82034b4726e331fd971969534913c`
-- Last verified at: `2026-08-22T15:25:16Z`
-
-### `agent/capacity-aware-multi-gpu-scheduling`
-
-- Outcome: its work is contained in `main` through merge commits `7f89823` and `0c93727`.
-- Disposition: delete after the `v1.0.0` history records its delivered functionality.
-- Last verified head: `a5cdf9e`
-- Last verified at: `2026-08-22T15:25:16Z`
-
-### `agent/recache-only`
-
-- Outcome: its head equals the pre-release `main` head; the cache-only and pipe-input work is fully contained.
-- Disposition: delete after the `v1.0.0` history records its delivered functionality.
-- Last verified head: `1422797653e82034b4726e331fd971969534913c`
-- Last verified at: `2026-08-22T15:25:16Z`
+- Last verified head: `ed847e8` plus the branch-ledger cleanup that removed completed branch records.
+- Last verified at: `2026-08-22`
