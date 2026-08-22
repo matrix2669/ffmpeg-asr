@@ -2,6 +2,12 @@
 
 All notable matrix2669 fork changes are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Reconstructed the architecture decision record from project conversations, implementation history, pull requests, validation evidence, and the related Dispatcharr plugin workflow.
+
 ## [1.0.0] - 2026-08-22
 
 ### Added

@@ -15,7 +15,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
-| `feature/reconstruct-decisions` | feature | active | `dev` | `dev` | Reconstruct durable architectural decisions from complete available chat, work, Git, PR, and related-plugin history. |
 
 ## Branch records
 
@@ -35,15 +34,3 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Validation: shell syntax, release metadata, packaging, and hardware/live validation proportionate to behavioral changes.
 - Last verified head: `ed847e8` plus the branch-ledger cleanup that removed completed branch records.
 - Last verified at: `2026-08-22`
-
-### `feature/reconstruct-decisions`
-
-- Purpose: replace the preliminary decisions file with the rationale, rejected alternatives, superseded experiments, validation evidence, and cross-project contracts established during ffmpeg-asr development.
-- Base: `dev` at `a30bd9342abfff1edcca1724621a192389129a32`.
-- Intended target: `dev`.
-- In scope: `DECISIONS.md` and this branch record.
-- Out of scope: runtime behavior, version changes, tagging, releasing, and downstream source-pin changes.
-- History reviewed: ChatGPT tasks `FFMpeg-ASR`, `FFmpeg Dispatcharr Profile`, `Mobile Streaming Profile Setup`, and `Dispatcharr Xtream Output Profile`; Codex task `Add multi-GPU FFmpeg-ASR selection`; repository commits and PRs; related FFmpeg Smart plugin source-sync and release history; current code and documentation.
-- Validation: reconstructed 15 ADRs from the listed history; compared every decision with the `v1.0.0` implementation, both merged fork pull requests, and the plugin source-pin workflow; confirmed all cited commits resolve; `scripts/validate.sh` and Git whitespace checks pass.
-- Last verified head: `a30bd9342abfff1edcca1724621a192389129a32`.
-- Last verified at: `2026-08-22`.
