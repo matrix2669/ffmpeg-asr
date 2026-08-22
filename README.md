@@ -2,6 +2,8 @@
 
 Adaptive stream normalizer with hardware-accelerated transcoding fallback.
 
+This is the matrix2669 maintained fork of `FiveBoroughs/ffmpeg-asr`. It is the canonical source for the commit-pinned script embedded by Dispatcharr FFmpeg Smart.
+
 ## What it does
 
 `ffmpeg-smart.sh` normalizes live streams into MPEG-TS while minimizing unnecessary video re-encoding. Video is stream-copied when it already satisfies the resolved output policy; otherwise the script uses the fastest working hardware/software transcode path found by its capability probe.
@@ -361,3 +363,17 @@ Full encoder benchmark:
 ```
 
 `benchmark-accel.sh` uses the same `/dev/dri/renderD*` discovery and `DRI_DEVICE` / `QSV_DEVICE` / `VAAPI_DEVICE` overrides as `ffmpeg-smart.sh`.
+
+## Versions and source verification
+
+Normal `vMAJOR.MINOR.PATCH` tags identify stable matrix2669 states. Downstream integrations should pin both the full Git commit and file checksum rather than following a moving branch or trusting the version label alone.
+
+## Development and upstream contributions
+
+Fork-owned development uses `dev` and short-lived feature or fix branches. Potential contributions to FiveBoroughs are rebuilt as focused `contrib/*` branches based directly on the current upstream `main`, keeping unrelated maintained-fork history out of upstream pull requests.
+
+See `AGENT.md`, `DECISIONS.md`, `UPSTREAM.md`, and `RELEASE.md` for development and release policy.
+
+## License status
+
+The reviewed upstream repository does not currently declare a software license. This fork preserves upstream provenance and does not claim to relicense inherited code. A Git tag identifies source state but does not grant additional use or redistribution rights.
