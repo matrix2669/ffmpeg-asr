@@ -15,6 +15,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
+| `fix/persistent-state-errors` | work | active | `dev` | `dev` | Support consumer-owned persistent state and explicit missing-cache failures. |
 
 ## Branch records
 
@@ -34,3 +35,11 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Validation: shell syntax, release metadata, packaging, and hardware/live validation proportionate to behavioral changes.
 - Last verified head: `ed847e8` plus the branch-ledger cleanup that removed completed branch records.
 - Last verified at: `2026-08-22`
+
+### `fix/persistent-state-errors`
+
+- Purpose: allow integrations to store cache and benchmark state outside replaceable source directories, and provide a clear wrapper-identified failure when a required cache is unavailable.
+- Base: `dev` at `d521be2`.
+- Intended target: `dev`.
+- Validation: shell/static checks plus standalone cache-path, missing-cache, recache, lock, and downstream plugin/container tests.
+- Started: `2026-08-22`.

@@ -58,6 +58,26 @@ The normalized MPEG-TS stream is written to stdout.
 
 `-maxres`, `-maxbr`/`-maxbitrate`, `-maxchan`, `-sdr`, and `-deint` are independent optional constraints. Any one can be used by itself, or they can be combined.
 
+## Persistent state
+
+By default, `.capabilities.cache`, `probe-sample.mkv`, and `.benchmark.lock` remain beside `ffmpeg-smart.sh` for standalone compatibility. Integrations installed in replaceable application or plugin directories should provide a persistent writable state directory:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles ./ffmpeg-smart.sh -i "stream_url"
+```
+
+The directory is created when possible. Startup exits with status `73` and an `[ffmpeg-smart] ERROR [state-directory]` message if it cannot be created or written.
+
+Integrations that coordinate benchmarking separately can also require an existing valid cache:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles \
+FFMPEG_SMART_REQUIRE_CACHE=true \
+./ffmpeg-smart.sh -i "stream_url"
+```
+
+With this mode enabled, a missing, invalid, or hardware-stale cache does not launch an implicit benchmark during stream startup. The wrapper exits with status `78` and a specific `[ffmpeg-smart] ERROR [capability-cache-*]` message instructing the operator to rebuild the hardware cache. Explicit `--recache` and `--recache-only` remain available and are not blocked by this setting.
+
 ## Policy model
 
 The normalizer first resolves its base video policy:
@@ -340,7 +360,7 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 ./ffmpeg-smart.sh --recache-only
 ```
 
-While a cache-only benchmark is running, the script maintains `.benchmark.lock` beside itself. New normal transcode invocations exit with status 75 instead of competing with the benchmark. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
+While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal transcode invocations exit with status 75 instead of competing with the benchmark. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
 
 `-i pipe:0` and `-i -` are supported for live pipeline integrations such as Dispatcharr Output Profiles. The wrapper captures up to four seconds of the pipe for probing, then prepends that exact sample to the remaining input before starting FFmpeg so probe data is not lost.
 

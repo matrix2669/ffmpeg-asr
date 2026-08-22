@@ -691,3 +691,48 @@ The separate Dispatcharr plugin `v0.1.0` had already been published with a pinne
 - Upstream pull request: `FiveBoroughs/ffmpeg-asr#2`
 - Fork tag: `v1.0.0`
 - Source task: Codex `Update standalone release workflow`
+
+---
+
+# ADR-016: Separate persistent runtime state from replaceable installations
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-22
+
+## Decision
+
+Keep the standalone default of storing `.capabilities.cache`, `probe-sample.mkv`, and `.benchmark.lock` beside `ffmpeg-smart.sh`, but allow consumers to set `FFMPEG_SMART_STATE_DIR` to a persistent writable directory. All three files move together so capability reuse and benchmark coordination share one state boundary.
+
+Provide `FFMPEG_SMART_REQUIRE_CACHE` for managed integrations that coordinate maintenance separately. When enabled for a normal stream invocation, a missing, invalid, or hardware-stale cache must:
+
+- avoid an implicit capability/concurrency benchmark during stream startup;
+- write one clear `[ffmpeg-smart] ERROR [capability-cache-*]` diagnostic to stderr;
+- identify the cache path and recovery action;
+- exit with configuration status `78` before probing media.
+
+Explicit `--recache` and `--recache-only` bypass the required-cache refusal so maintenance can create or replace the cache. Failure to create or write the configured state directory exits with status `73` and an identified state-directory error.
+
+## Reason
+
+Application and plugin managers may replace their installation directory during updates. Runtime cache and lock files stored beside the executable are then deleted, which loses expensive capacity measurements and can make production streams fail while the wrapper attempts disruptive implicit probing. A consumer-owned state path survives code replacement, while an explicit required-cache mode gives operators a deterministic recovery message.
+
+## Alternatives considered
+
+- Store persistent data permanently in `/data` inside the generic wrapper. Rejected because standalone deployments may not have or want that layout; the consumer owns the location.
+- Keep cache files beside the script and copy them during plugin update. Rejected because the old plugin directory may be removed before new code can migrate it.
+- Automatically benchmark whenever a managed integration loses its cache. Rejected because real capacity testing is disruptive and must remain operator-coordinated.
+- Manufacture an invalid FFmpeg command so the error looks like an FFmpeg parser failure. Rejected because a direct wrapper-identified stderr diagnostic and non-zero configuration exit are clearer and do not misrepresent the cause.
+
+## Consequences
+
+Consumers must configure the same state directory for normal streams, recache maintenance, status reads, and benchmark locking. State-path and required-cache changes require missing/invalid/stale cache tests plus downstream integration validation. Existing standalone users retain the historical beside-script behavior.
+
+## Provenance
+
+- User-reported Dispatcharr plugin update deleting runtime files
+- Related plugin fix branch: `fix/persistent-state-errors`

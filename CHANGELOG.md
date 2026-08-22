@@ -4,6 +4,15 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Add `FFMPEG_SMART_STATE_DIR` for persistent cache, probe-media, and benchmark-lock storage outside replaceable source directories.
+- Add `FFMPEG_SMART_REQUIRE_CACHE` for integrations that must fail clearly instead of benchmarking during stream startup when the capability cache is missing, invalid, or stale.
+
+### Fixed
+
+- Identify capability-cache startup failures with explicit `[ffmpeg-smart]` error codes and configuration exit status `78`.
+
 ### Changed
 
 - Reconstructed the architecture decision record from project conversations, implementation history, pull requests, validation evidence, and the related Dispatcharr plugin workflow.

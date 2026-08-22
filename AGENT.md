@@ -11,7 +11,7 @@ This repository is a hybrid maintained fork of `FiveBoroughs/ffmpeg-asr`. It fol
 - `ffmpeg-smart.sh` resolves stream-copy versus transcode policy, probes hardware, caches capabilities and concurrent capacity, and launches FFmpeg.
 - `benchmark-accel.sh` downloads samples and benchmarks available encoders.
 - `benchmark-live.sh` exercises the production wrapper against local or live media.
-- `.capabilities.cache`, probe media, benchmark samples, benchmark results, and `.benchmark.lock` are runtime state and must not be committed or packaged as source.
+- `.capabilities.cache`, probe media, benchmark samples, benchmark results, and `.benchmark.lock` are runtime state and must not be committed or packaged as source. Consumers installed under replaceable directories set `FFMPEG_SMART_STATE_DIR` to a persistent writable location; standalone use defaults to the script directory.
 - The Dispatcharr plugin pins this repository, path, commit, and checksum in `ffmpeg-smart-profiles/FFMPEG_SMART_SOURCE.json`. Synchronization must remain reviewable through its check/sync workflows.
 
 ## Non-negotiable behavior
@@ -21,6 +21,7 @@ This repository is a hybrid maintained fork of `FiveBoroughs/ffmpeg-asr`. It fol
 - Capacity changes require simultaneous real-time workload validation: short boundary bracketing followed by longer confirmation. Account for 1080p60 and other workloads by weighted pixel rate.
 - Keep automatic scheduling self-contained; do not introduce required shared services or mutable cross-process state without an accepted decision.
 - Do not silently update the Dispatcharr plugin or an existing release. Source synchronization must produce a reviewable change pinned to an immutable commit.
+- Preserve the explicit required-cache failure contract for managed integrations: missing, invalid, or stale required caches identify `ffmpeg-smart` on stderr and exit before media probing.
 
 ## Branch workflow
 
