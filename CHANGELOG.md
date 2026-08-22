@@ -19,6 +19,10 @@ All notable matrix2669 fork changes are documented here.
 
 - Reconstructed the architecture decision record from project conversations, implementation history, pull requests, validation evidence, and the related Dispatcharr plugin workflow.
 
+### Validation
+
+- Validated the tagged wrapper through the Dispatcharr beta plugin: managed directory replacement preserved persistent state, a confirmed two-GPU recache measured A310 capacity 18 and UHD 770 capacity 15, and a complete 10-second 4K30 `pipe:0` transcode selected the A310 and produced constrained 1280×720 output.
+
 ## [1.0.0] - 2026-08-22
 
 ### Added

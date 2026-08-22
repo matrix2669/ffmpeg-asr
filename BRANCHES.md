@@ -31,6 +31,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: integrate fork-owned feature and fix work before stable promotion.
 - Base: `main` at `1422797653e82034b4726e331fd971969534913c`
 - Intended target: `main`
-- Validation: `scripts/validate.sh`, standalone persistent-state/cache failure tests, downstream plugin tests, and installed-container missing/stale-cache behavior pass for `v1.1.0-beta.1`.
+- Validation: `scripts/validate.sh`, standalone persistent-state/cache failure tests, downstream plugin tests, a managed plugin-directory replacement, confirmed A310/UHD 770 recache, full Dispatcharr restart, and complete 10-second 4K30 `pipe:0` transcode pass for `v1.1.0-beta.1`.
 - Last verified head: the tested `v1.1.0-beta.1` source state including persistent-state and required-cache handling.
 - Last verified at: `2026-08-22`
