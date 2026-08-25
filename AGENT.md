@@ -1,5 +1,16 @@
 # Agent Guidance
 
+## Workspace Standards Reconciliation Gate
+
+Before any substantive work, locate the maintained local `matrix2669/workspace` checkout and run `<workspace>/scripts/reconcile-standards --check .` from this repository root. The workspace `AI-INSTRUCTIONS.md`, `AGENT-STANDARD.md`, and Git history must be available.
+
+If `WORKSPACE-STANDARDS.yaml` is missing, pending, or stale, stop project work and run `<workspace>/scripts/reconcile-standards --diff .`. Review the standards change against this complete `AGENT.md`, `DECISIONS.md`, code/configuration contracts, dependencies, `BRANCHES.md`, `RELEASE.md`, upstream requirements when applicable, and related projects.
+
+A contradiction blocks work. Ask focused follow-up questions to establish whether the changed standard, proposed work, new answer, or older accepted decision is authoritative; never choose silently. Record project-decision supersessions in `DECISIONS.md` and realign every affected artifact. Only after no contradiction remains, run `<workspace>/scripts/reconcile-standards --apply --confirm-reviewed-no-conflicts .`.
+
+Missing workspace standards or Git history is a hard block. Standards exceptions require explicit user authorization and must be stated in a dedicated section of this file with exact scope, rationale, authority, approval date, and review/removal trigger; `DECISIONS.md` cannot waive workspace standards.
+
+
 ## Purpose
 
 `ffmpeg-asr` is the canonical matrix2669 source for `ffmpeg-smart.sh`, an adaptive live-stream normalizer with hardware-accelerated fallback. The related `Dispatcharr-FFmpeg-Smart-Plugin` embeds a reviewed, commit-pinned copy; changes here never silently mutate a published plugin release.
