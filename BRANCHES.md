@@ -15,7 +15,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
-| `feature/additional-ffmpeg-options` | feature | active | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
+| `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 
 ## Branch records
 
@@ -41,6 +41,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: add a repeatable canonical wrapper argument for exact additional FFmpeg output arguments and document its placement and safety boundary.
 - Base: current `dev` at `5f12499`.
 - Intended target: `dev` after focused wrapper validation and downstream plugin synchronization.
+- Result: source commit `babd056` merged into `dev` at `f53f824`; `dev` is the tagged source for `v1.1.0-beta.2`.
 - Scope: `ffmpeg-smart.sh`, wrapper documentation, tests, and the durable decision record.
 - Exclusions: no changes to automatic GPU scheduling, managed codec/filter defaults, capacity benchmarking, releases, tags, or upstream contribution history.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/additional-ffmpeg-options` will expose the field and pin the reviewed canonical wrapper commit.
