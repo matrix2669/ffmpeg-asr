@@ -19,7 +19,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
 | `feature/degraded-proxy-fallback` | feature | merged | `dev` | `dev` | Add an opt-in stream-copy fallback for managed integrations when Smart capabilities are unavailable. |
 | `fix/cache-status-reporting` | fix | merged | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
-| `fix/beta5-validation` | fix | active | `dev` | `dev` | Correct the beta.5 Linux validation expectation without moving the immutable tag. |
+| `fix/beta5-validation` | fix | merged | `dev` | `dev` | Correct the beta.5 Linux validation expectation without moving the immutable tag. |
 
 ## Branch records
 
@@ -36,9 +36,9 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: integrate fork-owned feature and fix work before stable promotion.
 - Base: `main` at `1422797653e82034b4726e331fd971969534913c`
 - Intended target: `main`
-- Validation: `scripts/validate.sh`, standalone persistent-state/cache failure tests, downstream plugin tests, a managed plugin-directory replacement, confirmed A310/UHD 770 recache, full Dispatcharr restart, and complete 10-second 4K30 `pipe:0` transcode pass for `v1.1.0-beta.1`.
-- Last verified head: the tested `v1.1.0-beta.1` source state including persistent-state and required-cache handling.
-- Last verified at: `2026-08-22`
+- Validation: `scripts/validate.sh` passes persistent-state, required-cache, degraded-proxy, scoped-options, shell-syntax, version-agreement, and release-metadata checks for corrective beta.6; workspace validation and `git diff --check` pass. Downstream repin, GitHub, and live Dispatcharr validation remain pending.
+- Last verified head: corrective beta.6 integration at `d21700946f7b16438603b2c1f370c34de27993a0`.
+- Last verified at: `2026-08-26`
 
 ### `feature/additional-ffmpeg-options`
 
@@ -84,8 +84,8 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Scope: an integration-opt-in degraded proxy mode, per-invocation notification marker, cache/lock routing, focused tests, user/developer guidance, and durable decision history.
 - Exclusions: no automatic benchmark, CPU transcode substitute, hardware benchmark-policy or capacity change, native/custom FFmpeg mode, Dispatcharr core change, stable release, or upstream contribution.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/degraded-proxy-fallback` enables the canonical mode and owns persistent Dispatcharr notification behavior.
-- Result: finalized source commit `288f5675afa64b3876f0f3682702e77d80b962a3` merged into `dev` at `fc5b0d7`; this reviewed integration is the candidate source for `v1.1.0-beta.5`.
-- Validation: `scripts/validate.sh` passes default-disabled, missing, invalid, stale, benchmark-lock, pipe-input, unique-marker, option-placement, native FFmpeg-status, scoped-options, shell-syntax, and version-agreement tests for beta.5. Workspace validation, downstream 37-test integration, immutable source/checksum verification, and `git diff --check` pass. Live Dispatcharr validation remains pending.
+- Result: finalized source commit `288f5675afa64b3876f0f3682702e77d80b962a3` merged into `dev` at `fc5b0d7`; immutable tag `v1.1.0-beta.5` resolves to `4fafc8b5af300d6e47413cfb9cf8409fef7c2201` and remains unchanged.
+- Validation: fallback behavior tests passed, but beta.5 GitHub runs `33014299366` and `33014301559` exposed a stale two-path scoped-command test expectation after the third proxy path was added. Corrective beta.6 updates only version/release metadata and validation, leaving runtime fallback behavior unchanged. Live Dispatcharr validation remains pending.
 - Started: `2026-08-26`.
 
 ### `fix/beta5-validation`
@@ -96,5 +96,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Scope: test expectations for the third degraded-proxy input/map/mux construction path, explicit count assertion failures, beta.6 metadata, changelog, and branch ledger.
 - Exclusions: no runtime fallback, FFmpeg command, cache, hardware selection, capacity, notification-marker, stable release, or upstream-contribution behavior change; do not move or replace `v1.1.0-beta.5`.
 - Reported evidence: GitHub workflow runs `33014299366` and `33014301559` failed after the state/fallback tests passed because the scoped-options test still expected two input/map/mux construction sites; the reviewed wrapper now has three by design.
-- Validation: `scripts/validate.sh` passes the persistent-state/fallback suite, scoped FFmpeg option suite with explicit three-path counts, shell syntax, version agreement, and release metadata; workspace validation and `git diff --check` pass. GitHub validation remains pending.
+- Result: source commit `ef7cb2d` merged into `dev` at `d217009`; this reviewed integration is the candidate source for corrective `v1.1.0-beta.6`.
+- Validation: `scripts/validate.sh` passes the persistent-state/fallback suite, scoped FFmpeg option suite with explicit three-path counts, shell syntax, version agreement, and release metadata; workspace validation and `git diff --check` pass. Downstream repin and GitHub validation remain pending.
 - Started: `2026-08-26`.
