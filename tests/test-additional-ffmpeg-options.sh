@@ -172,6 +172,7 @@ assert_occurrence_count 2 '"${FFMPEG_AUDIO_ARGS[@]}"'
 assert_occurrence_count 3 '"${FFMPEG_MUX_ARGS[@]}"'
 grep -Fq '"${FFMPEG_VIDEO_TUNING_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh"
 assert_occurrence_count 2 '"${AUDIO_POLICY_ARGS[@]}"'
+assert_occurrence_count 2 '"${MAPPED_AUXILIARY_CODEC_ARGS[@]}"'
 video_tuning_line="$(grep -nF 'FFMPEG_VIDEO_TUNING_ARGS[@]+' "$repo_dir/ffmpeg-smart.sh" | tail -n 1 | cut -d: -f1)"
 video_policy_line="$(grep -nF 'VIDEO_POLICY_ARGS[@]+' "$repo_dir/ffmpeg-smart.sh" | tail -n 1 | cut -d: -f1)"
 [[ "$video_policy_line" -gt "$video_tuning_line" ]]

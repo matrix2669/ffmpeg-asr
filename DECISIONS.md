@@ -910,3 +910,47 @@ Integrations enabling proxy fallback must tell operators that Smart constraints 
 
 - Operator-approved degraded proxy design and benchmark-impact review, 2026-08-26
 - Related plugin branch: `feature/degraded-proxy-fallback`
+
+---
+
+# ADR-021: Preserve auxiliary mappings and top-level benchmark-lock ownership
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-26
+
+## Decision
+
+When a normal Smart video-copy or video-transcode path maps subtitle, data, or attachment streams, explicitly select stream copy for those types with `-c:s copy`, `-c:d copy`, and `-c:t copy`. Keep video and audio under their existing independent Smart policies. MPEG-TS compatibility remains native FFmpeg behavior: selecting an auxiliary stream does not promise that every source codec or attachment can be muxed into MPEG-TS.
+
+Make `.benchmark.lock` an owned top-level recache resource. Record the top-level Bash process ID and remove the lock on exit only when cleanup is running outside a Bash subshell and the file's recorded PID still matches that owner. Command substitutions, benchmark workers, and other subshells may inherit the exit trap but must not remove the parent's lock. Existing stale-lock recovery remains unchanged.
+
+## Reason
+
+Live Map All testing against a one-video MPEG-TS source with two AAC audio streams and a DVB subtitle selected every stream but failed before output because FFmpeg had no automatic MPEG-TS subtitle encoder. The wrapper already owns codec policy and must state copy behavior for auxiliary mappings just as it states video and audio behavior.
+
+A live two-GPU recache also showed the benchmark parent still running after the lock disappeared. Bash subshells inherit enough trap state that a shared unconditional `EXIT` cleanup can remove a parent-owned lock. Once missing, a managed invocation follows normal Smart policy instead of the integration's required degraded fallback, allowing hardware work to overlap the benchmark.
+
+## Alternatives considered
+
+- Remove Map All or reject every subtitle/data/attachment mapping. Rejected because MPEG-TS-compatible auxiliary streams can be preserved safely with explicit copy and advanced mappings are an intentional feature.
+- Transcode subtitles automatically. Rejected because Smart has no managed subtitle policy and text/bitmap conversions are format- and build-specific.
+- Ignore the early lock removal because stream copy may still occur through normal policy. Rejected because normal policy may transcode audio or video and the lock is the integration's authoritative maintenance boundary.
+- Let any process that inherits the trap remove the lock. Rejected by the live race and because only the top-level recache process owns benchmark lifetime.
+
+## Consequences
+
+Map All and typed custom mappings can preserve DVB subtitles and other MPEG-TS-compatible auxiliary streams without automatic encoder selection. Incompatible auxiliary codecs still fail with an attributable native mux error. Tests must exercise both normal video-copy and video-transcode command construction.
+
+Benchmark tests must prove the lock remains present after a command-substitution child exits and while a later benchmark command is active, then disappears when the top-level recache exits. Downstream managed integrations must repin the exact corrected wrapper before claiming benchmark fallback validation.
+
+## Provenance
+
+- Operator-authorized live custom-string and benchmark-fallback testing, 2026-08-26
+- Live source: one H.264 video, two AAC audio streams, and one DVB subtitle
+- Live recache evidence: top-level PID 86932 active after `.benchmark.lock` disappeared
+- Related plugin branch: `fix/map-all-benchmark-lock`
