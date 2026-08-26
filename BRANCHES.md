@@ -41,9 +41,9 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: add a repeatable canonical wrapper argument for exact additional FFmpeg output arguments and document its placement and safety boundary.
 - Base: current `dev` at `5f12499`.
 - Intended target: `dev` after focused wrapper validation and downstream plugin synchronization.
-- Result: source commit `babd056` merged into `dev` at `f53f824`; `dev` is the tagged source for `v1.1.0-beta.2`.
+- Result: source commit `babd056` merged into `dev` at `f53f824`; annotated tag `v1.1.0-beta.2` resolves to reviewed integration commit `6659e1b`.
 - Scope: `ffmpeg-smart.sh`, wrapper documentation, tests, and the durable decision record.
 - Exclusions: no changes to automatic GPU scheduling, managed codec/filter defaults, capacity benchmarking, releases, tags, or upstream contribution history.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/additional-ffmpeg-options` will expose the field and pin the reviewed canonical wrapper commit.
-- Validation: `scripts/validate.sh`, persistent-state and required-cache regression tests, focused argument-boundary checks for spaces and shell metacharacters, missing-value rejection, device-pre-scan isolation, shell syntax, version agreement, and `git diff --check` pass for `v1.1.0-beta.2`.
+- Validation: `scripts/validate.sh`, persistent-state and required-cache regression tests, focused argument-boundary checks for spaces and shell metacharacters, missing-value rejection, device-pre-scan isolation, shell syntax, version agreement, and `git diff --check` pass for `v1.1.0-beta.2`; the published `dev` workflow completed successfully.
 - Last verified at: `2026-08-25`.
