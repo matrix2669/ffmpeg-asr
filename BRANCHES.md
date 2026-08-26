@@ -67,9 +67,9 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: let managed consumers distinguish a cache that merely exists from one that is valid for the current script, policy, and hardware fingerprint.
 - Base: `dev` at `99536f5` after refreshing `origin` and `upstream` and confirming workspace standards revision `sha256:6456d4a722cfca0a03e6bce3d698208c844a114953c62d0fe757789d48f1c794`.
 - Intended target: `dev`, followed by approved immutable tag `v1.1.0-beta.4` and downstream plugin synchronization.
-- Result: source commit `59306a1` merged into `dev` at `6afa184`; this reviewed integration is the candidate source for `v1.1.0-beta.4`.
+- Result: source commit `59306a1` merged into `dev` at `6afa184`; annotated tag `v1.1.0-beta.4` resolves to reviewed integration commit `fb990e9`.
 - Scope: a read-only machine-stable cache-status interface, required-cache contract reuse, focused tests, user/developer guidance, and `v1.1.0-beta.4` metadata.
 - Exclusions: no benchmark or cache rebuild side effect, no hardware-selection or capacity change, no upstream contribution, no downstream plugin publication, and no stable tag, Release, or distributable ZIP.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `fix/launcher-permissions-cache-status` will consume the status interface and remove executable-bit dependence from managed profile launches.
-- Validation: `scripts/validate.sh` passes valid, missing, invalid, stale, conflicting-mode, required-cache, scoped-options, shell-syntax, and version-agreement checks; workspace reconciliation and `git diff --check` pass for the integration candidate. Downstream pin and installed-plugin validation remain required after this source commit is published.
+- Validation: `scripts/validate.sh` passes valid, missing, invalid, stale, conflicting-mode, required-cache, scoped-options, shell-syntax, and version-agreement checks for `v1.1.0-beta.4`; workspace reconciliation and `git diff --check` pass, and the published tag resolves correctly. Downstream pin and installed-plugin validation remain required.
 - Started: `2026-08-26`.
