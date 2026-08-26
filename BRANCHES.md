@@ -36,8 +36,8 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: integrate fork-owned feature and fix work before stable promotion.
 - Base: `main` at `1422797653e82034b4726e331fd971969534913c`
 - Intended target: `main`
-- Validation: `scripts/validate.sh` passes persistent-state, required-cache, degraded-proxy, scoped-options, shell-syntax, version-agreement, and release-metadata checks for corrective beta.6; workspace validation and `git diff --check` pass. Downstream repin, GitHub, and live Dispatcharr validation remain pending.
-- Last verified head: corrective beta.6 integration at `d21700946f7b16438603b2c1f370c34de27993a0`.
+- Validation: `scripts/validate.sh` passes persistent-state, required-cache, degraded-proxy, scoped-options, shell-syntax, version-agreement, and release-metadata checks for corrective beta.6; workspace validation, exact downstream beta.8 pin/checksum, 37 plugin tests, immutable plugin archive inspection, source/plugin/registry GitHub workflows, development-registry publication, and `git diff --check` pass. Live Dispatcharr fallback validation remains pending.
+- Last verified head: immutable `v1.1.0-beta.6` at `aeff09204000f58aa6fdd3a14781935f77a0823a`.
 - Last verified at: `2026-08-26`
 
 ### `feature/additional-ffmpeg-options`
@@ -96,6 +96,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Scope: test expectations for the third degraded-proxy input/map/mux construction path, explicit count assertion failures, beta.6 metadata, changelog, and branch ledger.
 - Exclusions: no runtime fallback, FFmpeg command, cache, hardware selection, capacity, notification-marker, stable release, or upstream-contribution behavior change; do not move or replace `v1.1.0-beta.5`.
 - Reported evidence: GitHub workflow runs `33014299366` and `33014301559` failed after the state/fallback tests passed because the scoped-options test still expected two input/map/mux construction sites; the reviewed wrapper now has three by design.
-- Result: source commit `ef7cb2d` merged into `dev` at `d217009`; this reviewed integration is the candidate source for corrective `v1.1.0-beta.6`.
-- Validation: `scripts/validate.sh` passes the persistent-state/fallback suite, scoped FFmpeg option suite with explicit three-path counts, shell syntax, version agreement, and release metadata; workspace validation and `git diff --check` pass. Downstream repin and GitHub validation remain pending.
+- Result: source commit `ef7cb2d` merged into `dev` at `d217009`; immutable tag `v1.1.0-beta.6` resolves to reviewed integration commit `aeff09204000f58aa6fdd3a14781935f77a0823a`, which plugin `v0.2.0-beta.8` pins exactly and `dispatcharr-plugins:dev` advertises.
+- Validation: `scripts/validate.sh` passes the persistent-state/fallback suite, scoped FFmpeg option suite with explicit three-path counts, shell syntax, version agreement, and release metadata. Workspace validation, tag GitHub run `33015471132`, exact downstream source/checksum verification, 37 plugin tests, plugin tag run `33015811503`, immutable archive inspection, registry run `33016050222`, public raw-manifest agreement, and `git diff --check` pass. Live Dispatcharr validation remains pending.
 - Started: `2026-08-26`.
