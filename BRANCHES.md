@@ -16,7 +16,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
-| `feature/scoped-ffmpeg-options` | feature | active | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
+| `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
 
 ## Branch records
 
@@ -54,8 +54,9 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: replace the single output-tail passthrough boundary with explicit input, mapping, video-tuning, audio, and MPEG-TS/mux argument groups while retaining FFmpeg Smart's hardware, encoder, filter, input, and final-output ownership.
 - Base: `dev` at `0f14a05`.
 - Intended target: `dev` after focused wrapper validation and downstream plugin synchronization.
+- Result: source commit `f95bca0` merged into `dev` at `2f48909`; this reviewed integration is the candidate source for `v1.1.0-beta.3`.
 - Scope: canonical wrapper arguments and placement, inherited/add/replace behavior, structural-option validation, backward compatibility for `-ffmpeg-option`, tests, user/developer documentation, and decision history.
 - Exclusions: no custom/native FFmpeg mode, no arbitrary input or output destination, no replacement of the hardware-selected video encoder or hardware filter graph, no scheduler/capacity changes, no upstream contribution, and no stable release.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/scoped-ffmpeg-options` will expose the scoped Smart controls and pin the reviewed canonical commit.
-- Validation plan: shell syntax and focused argument-construction tests for copy and transcode paths, mode validation, reserved-option rejection, token-boundary preservation, legacy alias compatibility, complete project validation, downstream pin verification, and `git diff --check`.
+- Validation: `scripts/validate.sh`, persistent-state and required-cache regressions, focused copy/transcode command construction, all scoped modes, exact argument boundaries, legacy alias compatibility, structural-option rejection, exactly-one-video mapping enforcement, shell syntax, version agreement, and `git diff --check` pass for the integration candidate.
 - Last verified at: `2026-08-25`.
