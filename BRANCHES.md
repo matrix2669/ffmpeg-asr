@@ -17,7 +17,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 | `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
-| `fix/cache-status-reporting` | fix | active | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
+| `fix/cache-status-reporting` | fix | merged | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
 
 ## Branch records
 
@@ -67,8 +67,9 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Purpose: let managed consumers distinguish a cache that merely exists from one that is valid for the current script, policy, and hardware fingerprint.
 - Base: `dev` at `99536f5` after refreshing `origin` and `upstream` and confirming workspace standards revision `sha256:6456d4a722cfca0a03e6bce3d698208c844a114953c62d0fe757789d48f1c794`.
 - Intended target: `dev`, followed by approved immutable tag `v1.1.0-beta.4` and downstream plugin synchronization.
+- Result: source commit `59306a1` merged into `dev` at `6afa184`; this reviewed integration is the candidate source for `v1.1.0-beta.4`.
 - Scope: a read-only machine-stable cache-status interface, required-cache contract reuse, focused tests, user/developer guidance, and `v1.1.0-beta.4` metadata.
 - Exclusions: no benchmark or cache rebuild side effect, no hardware-selection or capacity change, no upstream contribution, no downstream plugin publication, and no stable tag, Release, or distributable ZIP.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `fix/launcher-permissions-cache-status` will consume the status interface and remove executable-bit dependence from managed profile launches.
-- Validation: `scripts/validate.sh` passes valid, missing, invalid, stale, conflicting-mode, required-cache, scoped-options, shell-syntax, and version-agreement checks; workspace reconciliation and `git diff --check` pass. Downstream pin and installed-plugin validation remain required after this source commit is published.
+- Validation: `scripts/validate.sh` passes valid, missing, invalid, stale, conflicting-mode, required-cache, scoped-options, shell-syntax, and version-agreement checks; workspace reconciliation and `git diff --check` pass for the integration candidate. Downstream pin and installed-plugin validation remain required after this source commit is published.
 - Started: `2026-08-26`.
