@@ -775,3 +775,54 @@ Manual callers repeat `-ffmpeg-option` for each FFmpeg argument. Integrations ma
 
 - Operator requirement review: 2026-08-25
 - Related plugin branch: `feature/additional-ffmpeg-options`
+
+---
+
+# ADR-018: Keep advanced overrides inside phase-scoped FFmpeg Smart ownership
+
+## Status
+
+Accepted; supersedes ADR-017 and creates an explicit expert-mode exception to ADR-004
+
+## Date
+
+2026-08-25
+
+## Decision
+
+Retain FFmpeg Smart as the owner of hardware discovery, device initialization, the selected video encoder, hardware-dependent filters, the input source, and the fixed `-f mpegts pipe:1` output. Do not add a native/custom-command mode.
+
+Divide configurable FFmpeg behavior into five ordered groups:
+
+1. Input defaults follow dynamic user-agent, reconnect, and hardware-input arguments but precede `-i`. The inherited group is `-fflags +genpts+igndts+discardcorrupt -err_detect ignore_err`.
+2. Mapping follows `-i`. The inherited group is `-map 0:v:0 -map 0:a:0?`; `all` produces `-map 0`, and custom add/replace mappings use repeatable typed stream specifiers. Runtime validation requires exactly one selected video stream because probing, filter construction, GPU scheduling, and workload accounting describe one normalized video output per wrapper job. Ambiguous positive mappings and negative video mappings are rejected; negative non-video mappings remain available.
+3. Video tuning follows the Smart-owned encoder, hardware filters, profile, HDR, and color settings and applies only when video is transcoded. Its managed group contains bitrate, rate-control buffer, GOP/B-frame, accelerator tuning, output frame-rate, and codec-tag arguments. When `-maxbr` is active, its capped target, maximum rate, and buffer are appended after expert tuning and remain a hard policy ceiling.
+4. Audio follows video on both video-copy and video-transcode paths. Its inherited group is the wrapper's resolved AAC copy or normalization decision. Replacing the audio group may select another codec and is the only explicit exception to ADR-004's automatic AAC-normalization policy, but an active `-maxchan` downmix is appended afterward and remains a hard policy maximum.
+5. MPEG-TS/output options follow audio on both paths. The inherited group is `-avoid_negative_ts make_zero -start_at_zero -mpegts_copyts 0 -mpegts_flags +pat_pmt_at_frames+resend_headers -flush_packets 1 -max_muxing_queue_size 4096`.
+
+Input, video, audio, and mux groups support `inherit`, `add`, and `replace`. `inherit` uses the current versioned defaults; providing arguments without an explicit mode behaves as `add`; `add` appends arguments after the inherited group; and `replace` omits that managed group, including when the replacement is intentionally empty. Mapping supports `inherit`, `add`, `replace`, and `all`; replacement mapping must select exactly one video through a typed positive specifier and may select additional non-video streams.
+
+Use repeatable wrapper arguments so every advanced value remains one Bash-array element. Keep `-ffmpeg-option` as a backward-compatible mux/output alias. Reject wrapper-owned structural tokens with configuration exit status 64. The validation boundary covers explicit option tokens; encoder/build compatibility and the semantic correctness of other advanced combinations remain the operator's responsibility.
+
+## Reason
+
+FFmpeg options are file- and phase-sensitive. The single tail field could not place input flags before `-i`, could not replace additive mapping, skipped the video-copy path, and could let a video-codec override defeat the hardware-aware purpose of the wrapper. Phase-scoped groups provide predictable customization while preserving Smart's hardware benefits and normalizer contract.
+
+## Alternatives considered
+
+- Provide a full native FFmpeg command mode. Rejected because it bypasses FFmpeg Smart's hardware selection, scheduling, and adaptive copy/transcode behavior and does not belong in this integration.
+- Make the complete dynamic FFmpeg command one editable default string. Rejected because hardware, filters, rate control, input metadata, and copy/transcode choice are resolved at runtime and cannot be represented accurately by one static template.
+- Keep a single final-output field. Superseded because option placement and additive mapping cannot be modeled reliably at one command position.
+- Allow `-c:v`, hardware-device, filter-graph, `-i`, `-f`, or output-destination overrides. Rejected because those switches transfer ownership away from Smart or violate the Dispatcharr MPEG-TS pipe contract.
+
+## Consequences
+
+Copy and transcode paths must share resolved input, mapping, audio, and mux arrays. Video tuning must remain transcode-only. Tests must cover every mode, exact token boundaries, copy/transcode placement, legacy alias behavior, all/custom mapping, empty replacements, reserved-token failures, and values containing shell metacharacters without executing them.
+
+Downstream integrations may present friendlier text fields, but must parse them without evaluation, preserve token boundaries, label each scope accurately, and keep the structural ownership boundary aligned with the canonical wrapper.
+
+## Provenance
+
+- Operator requirement review: 2026-08-25
+- Public-plugin advanced-options design review: 2026-08-25
+- Related plugin branch: `feature/scoped-ffmpeg-options`
