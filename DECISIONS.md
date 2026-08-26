@@ -826,3 +826,40 @@ Downstream integrations may present friendlier text fields, but must parse them 
 - Operator requirement review: 2026-08-25
 - Public-plugin advanced-options design review: 2026-08-25
 - Related plugin branch: `feature/scoped-ffmpeg-options`
+
+---
+
+# ADR-019: Expose authoritative read-only cache validity
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-26
+
+## Decision
+
+Provide `--cache-status` as a read-only integration interface that calls the same `load_cache` contract used by normal wrapper startup. It must compare the stored hardware fingerprint with the current script version, benchmark policy, visible hardware identity and render-node mapping, and explicit device selection.
+
+Print exactly one machine-stable `FFMPEG_SMART_CACHE_STATUS` value: `valid`, `missing`, `invalid`, `stale`, or `unavailable`. Exit successfully only for `valid`; every non-valid result exits with configuration status `78`. The status operation must not probe media, run a hardware benchmark, create a capability cache, or replace an existing cache. It cannot be combined with `--recache` or `--recache-only`.
+
+## Reason
+
+A downstream status screen treated any parseable cache file as healthy even when normal startup rejected that same file after a hardware change. Cache schema and hardware fingerprinting belong to the canonical wrapper, so consumers must ask the wrapper rather than duplicate or approximate its validity rules.
+
+## Alternatives considered
+
+- Let each integration parse `HW_FINGERPRINT`. Rejected because it duplicates wrapper-owned hardware and policy logic and can drift from startup behavior.
+- Treat file existence as cache validity. Rejected by the reported stale-cache false positive.
+- Rebuild automatically while checking status. Rejected because capacity benchmarking is disruptive and remains an explicit maintenance action.
+
+## Consequences
+
+Managed consumers can distinguish a usable cache from stale cached capability details without starting a stream. Status vocabulary and exit behavior are an integration contract and require valid, missing, invalid, stale, conflicting-mode, and downstream-consumer tests when changed.
+
+## Provenance
+
+- Operator report: hardware-change startup failure was absent from plugin status because the cache file still existed, 2026-08-26
+- Related plugin branch: `fix/launcher-permissions-cache-status`

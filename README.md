@@ -66,6 +66,7 @@ The normalized MPEG-TS stream is written to stdout.
 | `-ffmpeg-option` | unset | Backward-compatible alias for additive `-ffmpeg-mux-option` arguments |
 | `--recache` | | Force a fresh capability probe |
 | `--recache-only` | | Rebuild the capability/capacity cache and exit without requiring an input stream |
+| `--cache-status` | | Check the existing cache against the current script, policy, and hardware without rebuilding it |
 
 `-maxres`, `-maxbr`/`-maxbitrate`, `-maxchan`, `-sdr`, and `-deint` are independent optional constraints. Any one can be used by itself, or they can be combined.
 
@@ -88,6 +89,14 @@ FFMPEG_SMART_REQUIRE_CACHE=true \
 ```
 
 With this mode enabled, a missing, invalid, or hardware-stale cache does not launch an implicit benchmark during stream startup. The wrapper exits with status `78` and a specific `[ffmpeg-smart] ERROR [capability-cache-*]` message instructing the operator to rebuild the hardware cache. Explicit `--recache` and `--recache-only` remain available and are not blocked by this setting.
+
+Managed integrations can check the same cache contract without starting a stream or benchmark:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles ./ffmpeg-smart.sh --cache-status
+```
+
+The command prints exactly one machine-stable `FFMPEG_SMART_CACHE_STATUS` value: `valid`, `missing`, `invalid`, `stale`, or `unavailable`. It exits successfully only for `valid`; every non-valid cache exits with status `78`. The check does not create, replace, or benchmark a cache. `--cache-status` cannot be combined with either recache option.
 
 ## Policy model
 
