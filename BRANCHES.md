@@ -15,6 +15,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable releases | Stable canonical source for matrix2669 releases and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
+| `feature/additional-ffmpeg-options` | feature | active | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 
 ## Branch records
 
@@ -34,3 +35,14 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Validation: `scripts/validate.sh`, standalone persistent-state/cache failure tests, downstream plugin tests, a managed plugin-directory replacement, confirmed A310/UHD 770 recache, full Dispatcharr restart, and complete 10-second 4K30 `pipe:0` transcode pass for `v1.1.0-beta.1`.
 - Last verified head: the tested `v1.1.0-beta.1` source state including persistent-state and required-cache handling.
 - Last verified at: `2026-08-22`
+
+### `feature/additional-ffmpeg-options`
+
+- Purpose: add a repeatable canonical wrapper argument for exact additional FFmpeg output arguments and document its placement and safety boundary.
+- Base: current `dev` at `5f12499`.
+- Intended target: `dev` after focused wrapper validation and downstream plugin synchronization.
+- Scope: `ffmpeg-smart.sh`, wrapper documentation, tests, and the durable decision record.
+- Exclusions: no changes to automatic GPU scheduling, managed codec/filter defaults, capacity benchmarking, releases, tags, or upstream contribution history.
+- Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/additional-ffmpeg-options` will expose the field and pin the reviewed canonical wrapper commit.
+- Validation: `scripts/validate.sh`, persistent-state and required-cache regression tests, focused argument-boundary checks for spaces and shell metacharacters, missing-value rejection, device-pre-scan isolation, shell syntax, version agreement, and `git diff --check` pass for `v1.1.0-beta.2`.
+- Last verified at: `2026-08-25`.

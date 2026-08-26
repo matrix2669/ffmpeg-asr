@@ -53,6 +53,7 @@ The normalized MPEG-TS stream is written to stdout.
 | `-sdr` | unset | Require SDR output; HDR sources are tone-mapped to BT.709 SDR |
 | `-deint` | unset | Require progressive output for detected interlaced video |
 | `-deinterlace` | unset | Alias for `-deint` |
+| `-ffmpeg-option` | unset | Append one exact FFmpeg output argument; repeat once for every argument |
 | `--recache` | | Force a fresh capability probe |
 | `--recache-only` | | Rebuild the capability/capacity cache and exit without requiring an input stream |
 
@@ -142,6 +143,21 @@ Each limit is conditional:
 When a transcode is required with `-maxbr 2M`, the normal 720p target is capped to 85% of the ceiling (1.7 Mbps) while `-maxrate` remains 2 Mbps, leaving headroom for constrained-VBR peaks.
 
 If multiple constraints require a transcode, they are handled in the same video/audio pipeline rather than causing multiple generations.
+
+## Additional FFmpeg options
+
+Use repeatable `-ffmpeg-option` arguments to add advanced options to the final FFmpeg output. Each occurrence passes its following value as one exact argument, without shell evaluation:
+
+```bash
+./ffmpeg-smart.sh \
+  -i "STREAM_URL" \
+  -ffmpeg-option -metadata \
+  -ffmpeg-option "service_name=Mobile feed" \
+  -ffmpeg-option -muxdelay \
+  -ffmpeg-option 0
+```
+
+These arguments are placed after the wrapper's managed video, audio, timing, and MPEG-TS options, so a repeated FFmpeg setting can override the managed value. The wrapper still supplies the final `-f mpegts pipe:1`; additional arguments cannot replace its output container or destination. This is an advanced escape hatch: the wrapper preserves argument boundaries but does not validate whether an added FFmpeg option is compatible with the selected encoder or filters.
 
 ## Maximum resolution
 

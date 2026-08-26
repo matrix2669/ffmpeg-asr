@@ -736,3 +736,42 @@ Consumers must configure the same state directory for normal streams, recache ma
 
 - User-reported Dispatcharr plugin update deleting runtime files
 - Related plugin fix branch: `fix/persistent-state-errors`
+
+---
+
+# ADR-017: Pass advanced FFmpeg output arguments without shell evaluation
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-25
+
+## Decision
+
+Support repeatable `-ffmpeg-option <argument>` wrapper arguments. Each occurrence appends exactly one argument to an array and passes that array to the final FFmpeg process after the wrapper-managed video, audio, timing, and MPEG-TS settings but before the fixed `-f mpegts pipe:1` output contract.
+
+Do not parse a shell command string, use `eval`, or invoke an intermediate shell. A consumer that starts from a free-form options field must split the field with a shell-compatible argument parser and emit one safely quoted `-ffmpeg-option` pair for every resulting token.
+
+The later placement means an advanced option may intentionally override an earlier managed FFmpeg setting. It cannot replace the wrapper's fixed MPEG-TS container or standard-output destination. The wrapper preserves argument boundaries but does not attempt to validate encoder- or filter-specific compatibility.
+
+## Reason
+
+Profiles occasionally need FFmpeg features that are outside the normalizer's maintained policy surface. Treating every advanced encoder or muxer switch as a new wrapper policy flag would keep expanding the core interface, while evaluating an arbitrary string would create quoting ambiguity and command-injection risk.
+
+## Alternatives considered
+
+- Accept one raw shell fragment. Rejected because correct quote handling would require shell evaluation or an incomplete parser.
+- Add a dedicated wrapper flag for every FFmpeg option. Rejected because hardware encoders and deployment-specific FFmpeg builds expose a large, evolving option surface.
+- Allow additional output URLs or replace `-f mpegts pipe:1`. Rejected because live integrations rely on the wrapper's single MPEG-TS standard-output contract.
+
+## Consequences
+
+Manual callers repeat `-ffmpeg-option` for each FFmpeg argument. Integrations may present one friendlier text field, but must preserve the parsed token boundaries when generating the wrapper command. Validation must cover values containing spaces and shell metacharacters, repeat ordering, missing values, and the device-pre-scan boundary.
+
+## Provenance
+
+- Operator requirement review: 2026-08-25
+- Related plugin branch: `feature/additional-ffmpeg-options`
