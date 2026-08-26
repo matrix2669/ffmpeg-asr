@@ -4,6 +4,22 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0-beta.3] - 2026-08-25
+
+### Added
+
+- Add phase-scoped input, mapping, transcode-video, audio, and MPEG-TS/mux FFmpeg controls with inherited, additive, and replacement modes.
+- Add all-stream and custom mapping modes without giving advanced options ownership of the input, hardware encoder, hardware filters, container, or output destination.
+
+### Changed
+
+- Apply audio and mux overrides consistently on both video-copy and video-transcode paths.
+- Preserve `-ffmpeg-option` as a backward-compatible alias for additive MPEG-TS/output options.
+
+### Safety
+
+- Reject wrapper-owned structural FFmpeg switches and preserve every advanced argument as an array element without shell evaluation.
+
 ## [1.1.0-beta.2] - 2026-08-25
 
 ### Added
@@ -51,7 +67,8 @@ All notable matrix2669 fork changes are documented here.
 
 - Tagged as `v1.0.0` without a GitHub Release or attached ZIP while upstream licensing remains unresolved.
 
-[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.2...HEAD
+[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.3...HEAD
+[1.1.0-beta.3]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.2...v1.1.0-beta.3
 [1.1.0-beta.2]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.1...v1.1.0-beta.2
 [1.1.0-beta.1]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.0.0...v1.1.0-beta.1
 [1.0.0]: https://github.com/matrix2669/ffmpeg-asr/tree/v1.0.0

@@ -33,6 +33,7 @@ This repository is a hybrid maintained fork of `FiveBoroughs/ffmpeg-asr`. It fol
 - Keep automatic scheduling self-contained; do not introduce required shared services or mutable cross-process state without an accepted decision.
 - Do not silently update the Dispatcharr plugin or an existing release. Source synchronization must produce a reviewable change pinned to an immutable commit.
 - Preserve the explicit required-cache failure contract for managed integrations: missing, invalid, or stale required caches identify `ffmpeg-smart` on stderr and exit before media probing.
+- Keep advanced FFmpeg arguments phase-scoped. The wrapper retains ownership of the input, hardware/device selection, video encoder, hardware filter graph, and fixed `-f mpegts pipe:1` destination; user arguments remain arrays and are never shell-evaluated.
 
 ## Branch workflow
 

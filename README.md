@@ -53,7 +53,17 @@ The normalized MPEG-TS stream is written to stdout.
 | `-sdr` | unset | Require SDR output; HDR sources are tone-mapped to BT.709 SDR |
 | `-deint` | unset | Require progressive output for detected interlaced video |
 | `-deinterlace` | unset | Alias for `-deint` |
-| `-ffmpeg-option` | unset | Append one exact FFmpeg output argument; repeat once for every argument |
+| `-ffmpeg-input-mode` | `inherit` | Input-default mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-input-option` | unset | Add one exact input-side FFmpeg argument before `-i`; repeat for every argument |
+| `-ffmpeg-map-mode` | `inherit` | Stream mapping: `inherit`, `add`, `replace`, or `all` |
+| `-ffmpeg-map` | unset | Add one map specifier, such as `0:a:0?`; repeat for custom mappings |
+| `-ffmpeg-video-mode` | `inherit` | Transcode-video tuning mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-video-option` | unset | Add one exact transcode-video tuning argument; repeat for every argument |
+| `-ffmpeg-audio-mode` | `inherit` | Audio-default mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-audio-option` | unset | Add one exact audio argument; repeat for every argument |
+| `-ffmpeg-mux-mode` | `inherit` | MPEG-TS/output-default mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-mux-option` | unset | Add one exact MPEG-TS/output argument; repeat for every argument |
+| `-ffmpeg-option` | unset | Backward-compatible alias for additive `-ffmpeg-mux-option` arguments |
 | `--recache` | | Force a fresh capability probe |
 | `--recache-only` | | Rebuild the capability/capacity cache and exit without requiring an input stream |
 
@@ -144,20 +154,47 @@ When a transcode is required with `-maxbr 2M`, the normal 720p target is capped 
 
 If multiple constraints require a transcode, they are handled in the same video/audio pipeline rather than causing multiple generations.
 
-## Additional FFmpeg options
+## Advanced FFmpeg Smart options
 
-Use repeatable `-ffmpeg-option` arguments to add advanced options to the final FFmpeg output. Each occurrence passes its following value as one exact argument, without shell evaluation:
+Advanced arguments are grouped by where FFmpeg requires them. Every argument is preserved as an array element without evaluating a shell command.
+
+Each group supports three modes:
+
+- `inherit` uses FFmpeg Smart's current versioned defaults. Supplying options while leaving the mode on `inherit` behaves as `add` for backward-compatible convenience.
+- `add` places the user arguments after the managed group, allowing later single-value settings to override an earlier default.
+- `replace` omits the managed group and uses only the supplied arguments. An intentionally blank replacement is allowed except for stream mapping, which must still select at least one stream.
+
+The groups have these boundaries:
+
+- **Input** follows the dynamic HTTP user-agent/reconnect and hardware-input setup but precedes `-i`. Its inherited values are `-fflags +genpts+igndts+discardcorrupt -err_detect ignore_err`.
+- **Mapping** follows `-i`. Its inherited value is `-map 0:v:0 -map 0:a:0?`; `all` uses `-map 0`, while `add` and `replace` accept repeated typed `-ffmpeg-map` specifiers. A job must select exactly one video stream because Smart probes, filters, schedules, and accounts for one hardware-normalized video output. Ambiguous positive mappings and negative video mappings are rejected; multiple audio, subtitle, data, or attachment mappings remain advanced FFmpeg compatibility choices.
+- **Video tuning** is used only when Smart chooses hardware/software video transcoding. Replace removes managed bitrate, GOP, frame-rate, and encoder tuning, but retains the selected encoder, hardware filter graph, color policy, and any explicit `-maxbr` ceiling.
+- **Audio** follows video processing on both the copy and transcode paths. Replace removes Smart's normal AAC/copy arguments for the mapped audio streams, while an explicit `-maxchan` remains a hard maximum.
+- **MPEG-TS/output** follows audio on both paths. Its inherited group normalizes timestamps, resends PAT/PMT, flushes packets, and sets the mux queue size. The final `-f mpegts pipe:1` remains fixed.
+
+For example, this retains hardware selection while replacing input defaults, mapping all streams, adding GOP/key-frame tuning, replacing audio with AC-3, and replacing the MPEG-TS flags:
 
 ```bash
 ./ffmpeg-smart.sh \
   -i "STREAM_URL" \
-  -ffmpeg-option -metadata \
-  -ffmpeg-option "service_name=Mobile feed" \
-  -ffmpeg-option -muxdelay \
-  -ffmpeg-option 0
+  -ffmpeg-input-mode replace \
+  -ffmpeg-input-option -fflags \
+  -ffmpeg-input-option +discardcorrupt+genpts+nobuffer \
+  -ffmpeg-map-mode all \
+  -ffmpeg-video-mode add \
+  -ffmpeg-video-option -g \
+  -ffmpeg-video-option 60 \
+  -ffmpeg-video-option -force_key_frames \
+  -ffmpeg-video-option 'expr:gte(t,n_forced*2)' \
+  -ffmpeg-audio-mode replace \
+  -ffmpeg-audio-option -c:a \
+  -ffmpeg-audio-option ac3 \
+  -ffmpeg-mux-mode replace \
+  -ffmpeg-mux-option -mpegts_flags \
+  -ffmpeg-mux-option +pat_pmt_at_frames+resend_headers+initial_discontinuity
 ```
 
-These arguments are placed after the wrapper's managed video, audio, timing, and MPEG-TS options, so a repeated FFmpeg setting can override the managed value. The wrapper still supplies the final `-f mpegts pipe:1`; additional arguments cannot replace its output container or destination. This is an advanced escape hatch: the wrapper preserves argument boundaries but does not validate whether an added FFmpeg option is compatible with the selected encoder or filters.
+FFmpeg Smart rejects structural switches that would take ownership of its input, stream-mapping syntax, hardware selection, hardware filter graph, selected video encoder, output format, or output destination. Advanced settings remain operator-controlled and may still be unsupported by the selected encoder or installed FFmpeg build.
 
 ## Maximum resolution
 
