@@ -17,6 +17,18 @@ sed -n '/^validate_runtime_mapping()/,/^}/p' "$repo_dir/ffmpeg-smart.sh" >> "$te
 # shellcheck source=/dev/null
 source "$test_dir/functions.sh"
 
+assert_occurrence_count() {
+    local expected="$1"
+    local needle="$2"
+    local actual
+
+    actual="$(grep -Fc "$needle" "$repo_dir/ffmpeg-smart.sh")"
+    if [[ "$actual" -ne "$expected" ]]; then
+        echo "Expected $expected occurrences of $needle, found $actual" >&2
+        exit 1
+    fi
+}
+
 LOG_PREFIX="[ffmpeg-smart-test]"
 DRI_DEVICE=""
 VAAPI_DEVICE=""
@@ -154,12 +166,12 @@ if (FFMPEG_MAP_MODE="add"; USER_MAP_SPECS=(-0:v:0); validate_runtime_mapping 1) 
     exit 1
 fi
 
-[[ $(grep -Fc '"${FFMPEG_INPUT_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh") -eq 2 ]]
-[[ $(grep -Fc '"${FFMPEG_MAP_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh") -eq 2 ]]
-[[ $(grep -Fc '"${FFMPEG_AUDIO_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh") -eq 2 ]]
-[[ $(grep -Fc '"${FFMPEG_MUX_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh") -eq 2 ]]
+assert_occurrence_count 3 '"${FFMPEG_INPUT_ARGS[@]}"'
+assert_occurrence_count 3 '"${FFMPEG_MAP_ARGS[@]}"'
+assert_occurrence_count 2 '"${FFMPEG_AUDIO_ARGS[@]}"'
+assert_occurrence_count 3 '"${FFMPEG_MUX_ARGS[@]}"'
 grep -Fq '"${FFMPEG_VIDEO_TUNING_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh"
-[[ $(grep -Fc '"${AUDIO_POLICY_ARGS[@]}"' "$repo_dir/ffmpeg-smart.sh") -eq 2 ]]
+assert_occurrence_count 2 '"${AUDIO_POLICY_ARGS[@]}"'
 video_tuning_line="$(grep -nF 'FFMPEG_VIDEO_TUNING_ARGS[@]+' "$repo_dir/ffmpeg-smart.sh" | tail -n 1 | cut -d: -f1)"
 video_policy_line="$(grep -nF 'VIDEO_POLICY_ARGS[@]+' "$repo_dir/ffmpeg-smart.sh" | tail -n 1 | cut -d: -f1)"
 [[ "$video_policy_line" -gt "$video_tuning_line" ]]
