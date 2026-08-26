@@ -4,6 +4,12 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0-beta.4] - 2026-08-26
+
+### Added
+
+- Add a read-only `--cache-status` interface so managed consumers can distinguish valid, missing, invalid, and hardware- or policy-stale capability caches without triggering a benchmark.
+
 ## [1.1.0-beta.3] - 2026-08-25
 
 ### Added
@@ -67,7 +73,8 @@ All notable matrix2669 fork changes are documented here.
 
 - Tagged as `v1.0.0` without a GitHub Release or attached ZIP while upstream licensing remains unresolved.
 
-[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.3...HEAD
+[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.4...HEAD
+[1.1.0-beta.4]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.3...v1.1.0-beta.4
 [1.1.0-beta.3]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.2...v1.1.0-beta.3
 [1.1.0-beta.2]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.1...v1.1.0-beta.2
 [1.1.0-beta.1]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.0.0...v1.1.0-beta.1
