@@ -17,7 +17,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 | `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
-| `feature/degraded-proxy-fallback` | feature | active | `dev` | `dev` | Add an opt-in stream-copy fallback for managed integrations when Smart capabilities are unavailable. |
+| `feature/degraded-proxy-fallback` | feature | merged | `dev` | `dev` | Add an opt-in stream-copy fallback for managed integrations when Smart capabilities are unavailable. |
 | `fix/cache-status-reporting` | fix | merged | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
 
 ## Branch records
@@ -83,6 +83,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Scope: an integration-opt-in degraded proxy mode, per-invocation notification marker, cache/lock routing, focused tests, user/developer guidance, and durable decision history.
 - Exclusions: no automatic benchmark, CPU transcode substitute, hardware benchmark-policy or capacity change, native/custom FFmpeg mode, Dispatcharr core change, stable release, or upstream contribution.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/degraded-proxy-fallback` enables the canonical mode and owns persistent Dispatcharr notification behavior.
-- Result: canonical wrapper checkpoint `4ff4a386f8d0511ec1228708c74eeacda745da04` is pinned by downstream plugin checkpoint `fd6099f7d87c2b5fea80a7fae92d570fb36fcdec`.
-- Validation: `scripts/validate.sh` passes default-disabled, missing, invalid, stale, benchmark-lock, pipe-input, unique-marker, option-placement, native FFmpeg-status, scoped-options, shell-syntax, and version-agreement tests. Workspace validation, downstream 37-test integration, immutable source/checksum verification, and `git diff --check` pass. Live Dispatcharr validation remains pending.
+- Result: finalized source commit `288f5675afa64b3876f0f3682702e77d80b962a3` merged into `dev` at `fc5b0d7`; this reviewed integration is the candidate source for `v1.1.0-beta.5`.
+- Validation: `scripts/validate.sh` passes default-disabled, missing, invalid, stale, benchmark-lock, pipe-input, unique-marker, option-placement, native FFmpeg-status, scoped-options, shell-syntax, and version-agreement tests for beta.5. Workspace validation, downstream 37-test integration, immutable source/checksum verification, and `git diff --check` pass. Live Dispatcharr validation remains pending.
 - Started: `2026-08-26`.
