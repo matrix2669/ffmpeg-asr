@@ -863,3 +863,50 @@ Managed consumers can distinguish a usable cache from stale cached capability de
 
 - Operator report: hardware-change startup failure was absent from plugin status because the cache file still existed, 2026-08-26
 - Related plugin branch: `fix/launcher-permissions-cache-status`
+
+---
+
+# ADR-020: Offer an integration-opt-in degraded stream-copy proxy
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-26
+
+## Decision
+
+Add an opt-in `FFMPEG_SMART_CACHE_FALLBACK=proxy` mode for managed integrations. Existing standalone behavior remains unchanged when the variable is unset. For a normal stream invocation, proxy fallback applies when either:
+
+- a live hardware benchmark lock prevents Smart processing; or
+- `FFMPEG_SMART_REQUIRE_CACHE=true` and the capability cache is missing, invalid, stale, or unavailable.
+
+The degraded path runs FFmpeg directly with the resolved user-agent, reconnect, input, mapping, and MPEG-TS/mux groups, followed by `-c copy -f mpegts pipe:1`. It does not probe media, select hardware, apply Smart video/audio policy, run filters, or substitute CPU transcoding. A source that cannot be stream-copied into MPEG-TS may still fail with FFmpeg's native error.
+
+Allow an integration to set `FFMPEG_SMART_FALLBACK_MARKER` to a writable file. Every degraded invocation replaces that marker with a unique invocation token before FFmpeg starts. Marker-write failure is logged but does not turn a usable proxy fallback into a stream failure.
+
+`--cache-status`, `--recache`, and `--recache-only` retain their existing behavior. Explicit maintenance remains operator-controlled.
+
+## Reason
+
+A managed cache can become unusable after installation, plugin update, wrapper-policy change, or hardware change. Failing early is attributable but makes every managed stream look broken until an operator can run the disruptive capability scan. A pure stream-copy proxy preserves basic service without claiming that Smart normalization or hardware acceleration remains active.
+
+The concurrency benchmark measures hardware decode/filter/encode capacity. Stream copy does not use those paths and is consistent with allowing ordinary proxy streams to continue during a scan. It still consumes some shared CPU, memory, and network I/O, so unusually heavy proxy load can affect the host even though it does not consume the GPU encoder capacity being measured.
+
+## Alternatives considered
+
+- Enable fallback unconditionally for all standalone users. Rejected because existing cache and implicit-probe behavior must not change without an explicit integration choice.
+- Use CPU transcoding while the cache is unavailable. Rejected because it can overload the host and would silently approximate rather than preserve the selected Smart policy.
+- Continue returning only exit 75 or 78. Superseded for integrations that explicitly enable degraded service because Dispatcharr presents those exits as ordinary source failures and retries alternatives.
+- Wait for the benchmark or synthesize placeholder media. Rejected because both obscure the actual source stream and create fragile client-lifecycle behavior.
+
+## Consequences
+
+Integrations enabling proxy fallback must tell operators that Smart constraints and hardware acceleration are bypassed, provide a clear route to rebuild capabilities, and treat the marker as a notification signal rather than capability state. Tests must cover missing, invalid, stale, benchmark-locked, marker, option-placement, pipe-input, default-disabled, and native FFmpeg failure behavior.
+
+## Provenance
+
+- Operator-approved degraded proxy design and benchmark-impact review, 2026-08-26
+- Related plugin branch: `feature/degraded-proxy-fallback`

@@ -90,6 +90,19 @@ FFMPEG_SMART_REQUIRE_CACHE=true \
 
 With this mode enabled, a missing, invalid, or hardware-stale cache does not launch an implicit benchmark during stream startup. The wrapper exits with status `78` and a specific `[ffmpeg-smart] ERROR [capability-cache-*]` message instructing the operator to rebuild the hardware cache. Explicit `--recache` and `--recache-only` remain available and are not blocked by this setting.
 
+Managed integrations that prefer basic service over a startup failure can explicitly enable degraded proxy fallback:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles \
+FFMPEG_SMART_REQUIRE_CACHE=true \
+FFMPEG_SMART_CACHE_FALLBACK=proxy \
+./ffmpeg-smart.sh -i "stream_url"
+```
+
+When the required cache is missing, invalid, stale, or unavailable—or while a hardware benchmark lock is active—the wrapper skips probing, Smart policy, hardware selection, filters, and encoding. It runs a basic FFmpeg `-c copy` MPEG-TS proxy using the resolved input, mapping, and mux groups. Video/audio Smart constraints are not enforced in this mode, and an incompatible source can still fail native FFmpeg remuxing. The default `FFMPEG_SMART_CACHE_FALLBACK=none` preserves historical standalone behavior.
+
+An integration can set `FFMPEG_SMART_FALLBACK_MARKER` to a writable file. Every degraded invocation writes a new token there before starting FFmpeg, allowing the integration to re-display an operational notice if a previous warning was dismissed. The marker is a notification signal only; `--cache-status` remains the cache-validity authority.
+
 Managed integrations can check the same cache contract without starting a stream or benchmark:
 
 ```bash
@@ -422,7 +435,7 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 ./ffmpeg-smart.sh --recache-only
 ```
 
-While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal transcode invocations exit with status 75 instead of competing with the benchmark. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
+While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal invocations exit with status 75 instead of competing with the benchmark unless an integration explicitly enables degraded proxy fallback, in which case they use stream copy without GPU decode, filtering, or encoding. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
 
 `-i pipe:0` and `-i -` are supported for live pipeline integrations such as Dispatcharr Output Profiles. The wrapper captures up to four seconds of the pipe for probing, then prepends that exact sample to the remaining input before starting FFmpeg so probe data is not lost.
 

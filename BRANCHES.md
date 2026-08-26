@@ -17,6 +17,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 | `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
+| `feature/degraded-proxy-fallback` | feature | active | `dev` | `dev` | Add an opt-in stream-copy fallback for managed integrations when Smart capabilities are unavailable. |
 | `fix/cache-status-reporting` | fix | merged | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
 
 ## Branch records
@@ -72,4 +73,16 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Exclusions: no benchmark or cache rebuild side effect, no hardware-selection or capacity change, no upstream contribution, no downstream plugin publication, and no stable tag, Release, or distributable ZIP.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin v0.2.0-beta.6` pins commit `fb990e9`, consumes the status interface, repairs direct-launch executable modes, and is advertised through `dispatcharr-plugins:dev`.
 - Validation: `scripts/validate.sh` passes valid, missing, invalid, stale, conflicting-mode, required-cache, scoped-options, shell-syntax, and version-agreement checks for `v1.1.0-beta.4`; workspace reconciliation and `git diff --check` pass, and the published tag resolves correctly. The downstream beta.6 pin, source checksum, tests, tag archive, and registry publication pass; installed-plugin validation remains pending.
+- Started: `2026-08-26`.
+
+### `feature/degraded-proxy-fallback`
+
+- Purpose: keep managed streams available through a basic FFmpeg stream-copy proxy when a required capability cache is missing, invalid, stale, unavailable, or being rebuilt.
+- Base: `dev` at `d185a0e1d577cfeaf65106f392a64b5d9d4f5a9d` after refreshing project governance and remote state.
+- Intended target: `dev` after focused fallback, cache, benchmark-lock, marker, and downstream plugin validation.
+- Scope: an integration-opt-in degraded proxy mode, per-invocation notification marker, cache/lock routing, focused tests, user/developer guidance, and durable decision history.
+- Exclusions: no automatic benchmark, CPU transcode substitute, hardware benchmark-policy or capacity change, native/custom FFmpeg mode, Dispatcharr core change, stable release, or upstream contribution.
+- Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/degraded-proxy-fallback` enables the canonical mode and owns persistent Dispatcharr notification behavior.
+- Result: canonical wrapper checkpoint `4ff4a386f8d0511ec1228708c74eeacda745da04` is pinned by downstream plugin checkpoint `fd6099f7d87c2b5fea80a7fae92d570fb36fcdec`.
+- Validation: `scripts/validate.sh` passes default-disabled, missing, invalid, stale, benchmark-lock, pipe-input, unique-marker, option-placement, native FFmpeg-status, scoped-options, shell-syntax, and version-agreement tests. Workspace validation, downstream 37-test integration, immutable source/checksum verification, and `git diff --check` pass. Live Dispatcharr validation remains pending.
 - Started: `2026-08-26`.
