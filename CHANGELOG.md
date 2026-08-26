@@ -4,6 +4,15 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Add integration-opt-in degraded `-c copy` proxy fallback when a required capability cache is unusable or a hardware benchmark is active.
+- Add an optional per-invocation marker so managed integrations can re-display dismissed degraded-mode notifications.
+
+### Safety
+
+- Keep standalone behavior unchanged by default and never substitute CPU transcoding for unavailable Smart hardware policy.
+
 ## [1.1.0-beta.4] - 2026-08-26
 
 ### Added
