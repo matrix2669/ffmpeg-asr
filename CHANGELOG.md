@@ -4,6 +4,12 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0-beta.6] - 2026-08-26
+
+### Fixed
+
+- Correct the scoped-command validation counts for the added degraded proxy path and make count failures explicit on shells whose `errexit` behavior did not stop the prior bare assertions.
+
 ## [1.1.0-beta.5] - 2026-08-26
 
 ### Added
