@@ -17,6 +17,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 | `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
+| `feature/session-completion-remote-checkpoint` | governance | active | `dev` at `6dfb4ad` | `dev` | Reconcile the mandatory session-end GitHub checkpoint rule without changing wrapper behavior or distribution. |
 
 ## Branch records
 
@@ -60,3 +61,13 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/scoped-ffmpeg-options` will expose the scoped Smart controls and pin the reviewed canonical commit.
 - Validation: `scripts/validate.sh`, persistent-state and required-cache regressions, focused copy/transcode command construction, all scoped modes, exact argument boundaries, legacy alias compatibility, structural-option rejection, exactly-one-video mapping enforcement, shell syntax, version agreement, and `git diff --check` pass for `v1.1.0-beta.3`; the published tag resolves correctly and the `dev` workflow completed successfully.
 - Last verified at: `2026-08-25`.
+
+### `feature/session-completion-remote-checkpoint`
+
+- Purpose: inherit the workspace rule that every session checkpoints all in-scope work on its owning GitHub branch while keeping integration, upstream contribution, and publication separate.
+- Base: `dev` at `6dfb4ad47bc79e78ca46eaab7d31b7092171a356`.
+- Intended target: `dev` after review.
+- Scope: `AGENT.md`, `WORKSPACE-STANDARDS.yaml`, and this branch record.
+- Exclusions: wrapper or benchmark behavior, upstream contribution, downstream source pin, version, tag, Release, ZIP, licensing, or deployment changes.
+- Validation: workspace standards validation and `git diff --check` pass; no wrapper, benchmark, version, downstream pin, release, licensing, or deployment behavior changed.
+- Started: `2026-08-26`.
