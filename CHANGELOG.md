@@ -4,6 +4,8 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0-beta.5] - 2026-08-26
+
 ### Added
 
 - Add integration-opt-in degraded `-c copy` proxy fallback when a required capability cache is unusable or a hardware benchmark is active.
