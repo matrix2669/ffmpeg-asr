@@ -17,7 +17,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/additional-ffmpeg-options` | feature | merged | `dev` | `dev` | Add safely quoted, output-scoped passthrough arguments for the final FFmpeg command. |
 | `feature/scoped-ffmpeg-options` | feature | merged | `dev` | `dev` | Add Smart-owned, phase-scoped FFmpeg defaults and expert overrides without surrendering hardware selection. |
-| `feature/session-completion-remote-checkpoint` | governance | active | `dev` at `6dfb4ad` | `dev` | Reconcile the mandatory session-end GitHub checkpoint rule without changing wrapper behavior or distribution. |
+| `feature/session-completion-remote-checkpoint` | governance | integrated; retained | `dev` at `6dfb4ad` | `dev` | Reconcile the mandatory session-end GitHub checkpoint rule without changing wrapper behavior or distribution. |
 
 ## Branch records
 
@@ -66,8 +66,9 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 
 - Purpose: inherit the workspace rule that every session checkpoints all in-scope work on its owning GitHub branch while keeping integration, upstream contribution, and publication separate.
 - Base: `dev` at `6dfb4ad47bc79e78ca46eaab7d31b7092171a356`.
-- Intended target: `dev` after review.
+- Intended target: `dev`; integration was explicitly approved on `2026-08-26` after review.
 - Scope: `AGENT.md`, `WORKSPACE-STANDARDS.yaml`, and this branch record.
 - Exclusions: wrapper or benchmark behavior, upstream contribution, downstream source pin, version, tag, Release, ZIP, licensing, or deployment changes.
-- Validation: workspace standards validation and `git diff --check` pass; no wrapper, benchmark, version, downstream pin, release, licensing, or deployment behavior changed.
+- Validation: `scripts/validate.sh`, persistent-state and required-cache tests, scoped argument tests, version agreement at `1.1.0-beta.3`, workspace standards validation, exact changed-path review, and `git diff --check` pass; no wrapper, benchmark, version, downstream pin, release, licensing, or deployment behavior changed.
+- Current state: integrated into `dev`; the feature ref is retained pending separate branch-cleanup authority.
 - Started: `2026-08-26`.
