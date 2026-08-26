@@ -83,4 +83,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Scope: an integration-opt-in degraded proxy mode, per-invocation notification marker, cache/lock routing, focused tests, user/developer guidance, and durable decision history.
 - Exclusions: no automatic benchmark, CPU transcode substitute, hardware benchmark-policy or capacity change, native/custom FFmpeg mode, Dispatcharr core change, stable release, or upstream contribution.
 - Related work: `Dispatcharr-FFmpeg-Smart-Plugin` branch `feature/degraded-proxy-fallback` enables the canonical mode and owns persistent Dispatcharr notification behavior.
+- Result: canonical wrapper checkpoint `4ff4a386f8d0511ec1228708c74eeacda745da04` is pinned by downstream plugin checkpoint `fd6099f7d87c2b5fea80a7fae92d570fb36fcdec`.
+- Validation: `scripts/validate.sh` passes default-disabled, missing, invalid, stale, benchmark-lock, pipe-input, unique-marker, option-placement, native FFmpeg-status, scoped-options, shell-syntax, and version-agreement tests. Workspace validation, downstream 37-test integration, immutable source/checksum verification, and `git diff --check` pass. Live Dispatcharr validation remains pending.
 - Started: `2026-08-26`.
