@@ -20,6 +20,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `feature/degraded-proxy-fallback` | feature | merged | `dev` | `dev` | Add an opt-in stream-copy fallback for managed integrations when Smart capabilities are unavailable. |
 | `fix/cache-status-reporting` | fix | merged | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
 | `fix/beta5-validation` | fix | merged | `dev` | `dev` | Correct the beta.5 Linux validation expectation without moving the immutable tag. |
+| `fix/map-all-benchmark-lock` | fix | active | `dev` | `dev` | Copy mapped auxiliary streams explicitly and keep the benchmark lock owned by the top-level recache process. |
 
 ## Branch records
 
@@ -98,4 +99,14 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Reported evidence: GitHub workflow runs `33014299366` and `33014301559` failed after the state/fallback tests passed because the scoped-options test still expected two input/map/mux construction sites; the reviewed wrapper now has three by design.
 - Result: source commit `ef7cb2d` merged into `dev` at `d217009`; immutable tag `v1.1.0-beta.6` resolves to reviewed integration commit `aeff09204000f58aa6fdd3a14781935f77a0823a`, which plugin `v0.2.0-beta.8` pins exactly and `dispatcharr-plugins:dev` advertises.
 - Validation: `scripts/validate.sh` passes the persistent-state/fallback suite, scoped FFmpeg option suite with explicit three-path counts, shell syntax, version agreement, and release metadata. Workspace validation, tag GitHub run `33015471132`, exact downstream source/checksum verification, 37 plugin tests, plugin tag run `33015811503`, immutable archive inspection, registry run `33016050222`, public raw-manifest agreement, and `git diff --check` pass. Live Dispatcharr validation remains pending.
+- Started: `2026-08-26`.
+
+### `fix/map-all-benchmark-lock`
+
+- Purpose: correct live beta.6 behavior where Map All failed on a single-video MPEG-TS source containing DVB subtitles and command-substitution or benchmark-worker subshell exits removed the shared benchmark lock while the top-level recache remained active.
+- Base: `dev` at `504a67cc4e6954fa0dbd2396ec89c3a2e2cecd31` after refreshing `origin` and `upstream` and reconciling workspace standards revision `sha256:6456d4a722cfca0a03e6bce3d698208c844a114953c62d0fe757789d48f1c794`.
+- Intended target: `dev`, followed by an immutable corrective beta tag and exact downstream plugin synchronization.
+- Scope: explicit subtitle/data/attachment stream-copy codec selection on normal Smart output paths, top-level benchmark-lock ownership, focused regressions, version/release metadata, user guidance, and durable decision history.
+- Exclusions: no change to video/audio Smart policy, hardware selection, capacity measurement, mapping's exactly-one-video requirement, degraded proxy codec policy, upstream contribution, stable release, GitHub Release, or distributable ZIP.
+- Live evidence: a one-video/two-audio/DVB-subtitle source mapped with `-map 0` exited with FFmpeg status 8 because MPEG-TS had no automatic subtitle encoder; during a real two-GPU recache, PID 86932 remained active after `.benchmark.lock` disappeared and managed starts followed normal Smart/audio policy instead of degraded `-c copy` fallback.
 - Started: `2026-08-26`.

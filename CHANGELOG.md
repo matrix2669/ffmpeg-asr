@@ -4,6 +4,13 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0-beta.7] - 2026-08-26
+
+### Fixed
+
+- Explicitly stream-copy mapped subtitle, data, and attachment streams on normal video-copy and video-transcode paths so Map All can carry MPEG-TS-compatible auxiliary streams such as DVB subtitles without FFmpeg attempting automatic encoder selection.
+- Keep `.benchmark.lock` owned by the top-level recache process so exits from command substitutions and concurrent benchmark subshells cannot expose normal Smart processing while the hardware benchmark is still running.
+
 ## [1.1.0-beta.6] - 2026-08-26
 
 ### Fixed
@@ -90,7 +97,10 @@ All notable matrix2669 fork changes are documented here.
 
 - Tagged as `v1.0.0` without a GitHub Release or attached ZIP while upstream licensing remains unresolved.
 
-[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.4...HEAD
+[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.7...HEAD
+[1.1.0-beta.7]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.6...v1.1.0-beta.7
+[1.1.0-beta.6]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.5...v1.1.0-beta.6
+[1.1.0-beta.5]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.4...v1.1.0-beta.5
 [1.1.0-beta.4]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.3...v1.1.0-beta.4
 [1.1.0-beta.3]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.2...v1.1.0-beta.3
 [1.1.0-beta.2]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.1...v1.1.0-beta.2
