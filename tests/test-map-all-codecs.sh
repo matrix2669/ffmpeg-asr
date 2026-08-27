@@ -23,8 +23,8 @@ cat > "$fake_bin/ffprobe" <<'EOF'
 cat <<'JSON'
 {"streams":[
   {"codec_type":"video","codec_name":"h264","r_frame_rate":"30000/1001","pix_fmt":"yuv420p","field_order":"progressive","width":1280,"height":720},
-  {"codec_type":"audio","codec_name":"aac","channels":2},
-  {"codec_type":"audio","codec_name":"aac","channels":2},
+  {"codec_type":"audio","codec_name":"aac","channels":2,"sample_rate":"48000"},
+  {"codec_type":"audio","codec_name":"aac","channels":2,"sample_rate":"48000"},
   {"codec_type":"subtitle","codec_name":"dvb_subtitle"}
 ]}
 JSON

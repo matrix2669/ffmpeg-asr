@@ -954,3 +954,52 @@ Benchmark tests must prove the lock remains present after a command-substitution
 - Live source: one H.264 video, two AAC audio streams, and one DVB subtitle
 - Live recache evidence: top-level PID 86932 active after `.benchmark.lock` disappeared
 - Related plugin branch: `fix/map-all-benchmark-lock`
+
+---
+
+# ADR-022: Use metadata-validated adaptive input probing
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-27
+
+## Decision
+
+For normal URL inputs and the existing captured sample used by `pipe:0`/`-`, probe first with `-analyzeduration 1000000 -probesize 1000000`. Treat FFprobe process success as necessary but insufficient. Require the selected video stream to have a codec, positive dimensions, and pixel format, and require every selected audio stream to have a codec, positive channel count, and positive sample rate.
+
+When FFprobe exits successfully but selected-stream metadata is incomplete, retry at 2 seconds/2 MB. If it remains incomplete, retry with native FFmpeg defaults. If any FFprobe attempt exits nonzero, fail the input immediately without escalating its probe window; transport failures are not evidence that more media analysis is needed. If the default attempt still lacks required metadata, fail before launching FFmpeg.
+
+Apply the same bounded probe arguments that produced complete metadata to the final FFmpeg process. When only the native-default tier succeeds, omit both options from the final process. Keep `exec ffmpeg` as the final lifecycle boundary, preserve existing signal handling and captured-pipe packet replay, and do not add post-launch wrapper retries.
+
+Make `-analyzeduration` and `-probesize` wrapper-owned options rather than expert input overrides so preprobe and final-input behavior cannot diverge. Log incomplete-tier escalation and the selected tier, but never log the source URL or credentials.
+
+Prepare canonical `v1.1.1-beta.1` and downstream plugin `v0.2.1-beta.1` for authorized beta tagging, development-registry publication, and live Dispatcharr testing. This does not authorize a stable promotion, GitHub Release, or distributable archive.
+
+## Reason
+
+Controlled live testing found that six representative HDHomeRun streams produced exact metadata at 1 second/1 MB while reducing median FFprobe time from 5.69 seconds to 1.69 seconds. Twelve cross-provider samples mostly behaved the same; observed Trex failures were transient provider 5xx responses rather than probe-window failures.
+
+TVEverywhere CSPAN3 with HE-AACv2 provided the safety boundary. FFprobe exited zero at both 1 second/1 MB and 1.5 seconds/1.5 MB but reported zero channels, zero sample rate, and no profile. Final full A/V FFmpeg then failed with `sample rate not set`. The same stream produced complete metadata and valid A/V output at 2 seconds/2 MB and at native defaults. Exit status alone therefore cannot select the final probe tier.
+
+## Alternatives considered
+
+- Use 1 second/1 MB unconditionally. Rejected because deterministic HE-AACv2 input can exit zero with metadata that cannot initialize the MPEG-TS output.
+- Retry every FFprobe failure at larger windows. Rejected because provider HTTP failures need ordinary source retry/failover, not more local analysis time.
+- Use adaptive limits only for FFprobe. Rejected because the final FFmpeg process can rediscover the same incomplete metadata and fail unless it receives the successful tier.
+- Add a supervising wrapper retry after FFmpeg starts. Rejected because replacing direct `exec` would complicate signals, process ownership, Dispatcharr lifecycle handling, and output safety.
+
+## Consequences
+
+Most compatible sources start with the fast tier, delayed-header sources incur only the needed fallback, and transport failures remain attributable. Custom mappings validate the commonly indexed selected streams exactly; broad metadata/disposition audio selectors are validated conservatively across all audio streams because FFmpeg resolves those selectors.
+
+Tests must cover complete fast metadata, successful 2-second fallback, native-default fallback, exit-zero incomplete metadata, immediate transport failure, credential-free logging, and propagation of the selected tier to final FFmpeg arguments. Live beta validation must include representative HDHomeRun input and the CSPAN3 HE-AACv2 edge before publication beyond the development channel.
+
+## Provenance
+
+- Operator-approved controlled HDHomeRun and cross-provider matrices, 2026-08-27
+- Operator decision Q&A: apply to URL and captured-pipe inputs; preserve direct exec; log tiers without URLs; tag and deploy beta for testing, 2026-08-27
+- Downstream owner: `matrix2669/Dispatcharr-FFmpeg-Smart-Plugin`

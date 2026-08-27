@@ -15,6 +15,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable tags | Stable canonical source for matrix2669 versions and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
+| `feature/adaptive-input-probing` | feature | active | `dev` | `dev` | Add metadata-validated adaptive input probing and prepare `v1.1.1-beta.1`. |
 | `contrib/license-clarification` | upstream contribution | active, pending operator decision | `upstream/main` | `upstream/main` | Propose an explicit upstream MIT license without mixing fork-owned changes. |
 
 ## Branch records
@@ -42,6 +43,14 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Current head: `c4b14583cec5fc0c839cab10eb517ca9b0c915ce` (`docs: add MIT license`).
 - Scope: one new `LICENSE` file naming FiveBoroughs; the branch has no fork-governance or runtime changes.
 - State: this unmerged remote branch appeared after the requested branch cleanup completed. It is preserved pending the operator's decision because deleting it would erase concurrent work aimed at the active license blocker; no pull request currently exists.
+
+### `feature/adaptive-input-probing`
+
+- Purpose: shorten normal live-input startup while retaining complete selected-stream metadata and safe fallback for delayed audio headers.
+- Base and target: `dev` at `7829924588336f1de07f18d944472c429a32c5b1`; target `dev` after beta validation.
+- Scope: canonical wrapper probing, focused tests, documentation, decision record, beta tag, and downstream immutable plugin pin.
+- State: active; `v1.1.1-beta.1` is authorized for test tagging and deployment, but no stable promotion, GitHub Release, or distributable archive is authorized.
+- Last reviewed: `2026-08-27`.
 
 ## Completed branch cleanup
 

@@ -189,6 +189,7 @@ Each group supports three modes:
 The groups have these boundaries:
 
 - **Input** follows the dynamic HTTP user-agent/reconnect and hardware-input setup but precedes `-i`. Its inherited values are `-fflags +genpts+igndts+discardcorrupt -err_detect ignore_err`.
+- **Adaptive probing** is wrapper-owned. `-analyzeduration` and `-probesize` cannot be supplied through advanced input options because Smart must use the same validated tier for FFprobe and the final FFmpeg input.
 - **Mapping** follows `-i`. Its inherited value is `-map 0:v:0 -map 0:a:0?`; `all` uses `-map 0`, while `add` and `replace` accept repeated typed `-ffmpeg-map` specifiers. A job must select exactly one video stream because Smart probes, filters, schedules, and accounts for one hardware-normalized video output. Ambiguous positive mappings and negative video mappings are rejected. Mapped subtitle, data, and attachment streams are explicitly stream-copied so FFmpeg does not attempt to select an encoder, but the source codec must still be compatible with MPEG-TS; multiple auxiliary streams remain an expert compatibility choice.
 - **Video tuning** is used only when Smart chooses hardware/software video transcoding. Replace removes managed bitrate, GOP, frame-rate, and encoder tuning, but retains the selected encoder, hardware filter graph, color policy, and any explicit `-maxbr` ceiling.
 - **Audio** follows video processing on both the copy and transcode paths. Replace removes Smart's normal AAC/copy arguments for the mapped audio streams, while an explicit `-maxchan` remains a hard maximum.
@@ -438,6 +439,12 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal invocations exit with status 75 instead of competing with the benchmark unless an integration explicitly enables degraded proxy fallback, in which case they use stream copy without GPU decode, filtering, or encoding. Only the top-level recache owner may remove its lock; command substitutions and concurrent benchmark-worker subshells cannot clear it while the parent remains active. The owner removes the lock automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
 
 `-i pipe:0` and `-i -` are supported for live pipeline integrations such as Dispatcharr Output Profiles. The wrapper captures up to four seconds of the pipe for probing, then prepends that exact sample to the remaining input before starting FFmpeg so probe data is not lost.
+
+### Adaptive input probing
+
+Normal URL and captured-pipe inputs first use `-analyzeduration 1000000 -probesize 1000000`. A successful FFprobe exit is not enough: Smart requires a usable selected video codec, dimensions, and pixel format, plus codec, channel count, and sample rate for every selected audio stream. Incomplete selected-stream metadata retries at 2 seconds/2 MB and then with native FFmpeg defaults.
+
+The final FFmpeg process receives the same bounded probe tier that produced complete metadata. Native defaults remain unbounded by Smart when the default tier is needed. A nonzero FFprobe result is treated as an input or transport failure and exits immediately rather than using a larger analysis window as a network retry. Logs identify escalation and the selected tier without printing the source URL or credentials.
 
 ## Benchmarking
 
