@@ -15,6 +15,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable tags | Stable canonical source for matrix2669 versions and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
+| `contrib/license-clarification` | upstream contribution | active, pending operator decision | `upstream/main` | `upstream/main` | Propose an explicit upstream MIT license without mixing fork-owned changes. |
 
 ## Branch records
 
@@ -34,6 +35,14 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Publication state: `origin/dev` and `origin/main` contain the identical stable source; beta and stable tags remain immutable.
 - Last verified at: `2026-08-26`.
 
+### `contrib/license-clarification`
+
+- Purpose: add an explicit upstream MIT license as isolated licensing work.
+- Base: `upstream/main` at `99899d05affa501404ef2d2b926136a80bb87c75`.
+- Current head: `c4b14583cec5fc0c839cab10eb517ca9b0c915ce` (`docs: add MIT license`).
+- Scope: one new `LICENSE` file naming FiveBoroughs; the branch has no fork-governance or runtime changes.
+- State: this unmerged remote branch appeared after the requested branch cleanup completed. It is preserved pending the operator's decision because deleting it would erase concurrent work aimed at the active license blocker; no pull request currently exists.
+
 ## Completed branch cleanup
 
-On `2026-08-26`, all local and `origin` feature, fix, integration, safety, and release branches were deleted after their results were preserved in `CHANGELOG.md` and `DECISIONS.md` and their tips were verified as merged or tree-equivalent. Only `main` and `dev` remain; tags were retained.
+On `2026-08-26`, all feature, fix, integration, safety, and release branches that existed during cleanup were deleted locally and from `origin` after their results were preserved in `CHANGELOG.md` and `DECISIONS.md` and their tips were verified as merged or tree-equivalent. Tags were retained. The later concurrent `contrib/license-clarification` branch is the only additional remote ref and is explicitly recorded above pending operator direction.
