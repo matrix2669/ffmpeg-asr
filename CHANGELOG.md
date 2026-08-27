@@ -4,6 +4,25 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-26
+
+### Added
+
+- Add persistent state outside replaceable installations, authoritative cache-status reporting, and an integration-opt-in basic stream-copy fallback while required hardware capabilities are unavailable or being rebuilt.
+- Add safely quoted phase-scoped expert FFmpeg controls for input, mapping, video tuning, audio, and MPEG-TS output while retaining Smart ownership of hardware selection, encoders, filters, input, and the final pipe.
+- Add all-stream and typed custom mapping, explicit render-device selection, and repeatable additional FFmpeg arguments.
+
+### Fixed
+
+- Preserve compatible mapped subtitle, data, and attachment streams through explicit stream-copy codec selection.
+- Retain the benchmark lock for the complete top-level recache so managed integrations remain in degraded stream-copy mode until benchmarking finishes.
+- Report hardware-stale caches as unusable instead of treating file existence as cache health.
+
+### Validation
+
+- Promote the fully validated beta.7 tree without runtime changes. Canonical tests, two-GPU 18/15 capacity measurement, active-scan fallback, lock ownership, and live four-stream Map All with copied secondary audio and DVB subtitle pass.
+- Publish only the immutable stable tag. No GitHub Release or distributable archive is created while inherited licensing remains unresolved.
+
 ## [1.1.0-beta.7] - 2026-08-26
 
 ### Fixed
