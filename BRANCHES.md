@@ -20,7 +20,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `feature/degraded-proxy-fallback` | feature | merged | `dev` | `dev` | Add an opt-in stream-copy fallback for managed integrations when Smart capabilities are unavailable. |
 | `fix/cache-status-reporting` | fix | merged | `dev` | `dev` | Expose a read-only authoritative cache-validity check for managed consumers. |
 | `fix/beta5-validation` | fix | merged | `dev` | `dev` | Correct the beta.5 Linux validation expectation without moving the immutable tag. |
-| `fix/map-all-benchmark-lock` | fix | active | `dev` | `dev` | Copy mapped auxiliary streams explicitly and keep the benchmark lock owned by the top-level recache process. |
+| `fix/map-all-benchmark-lock` | fix | merged | `dev` | `dev` | Copy mapped auxiliary streams explicitly and keep the benchmark lock owned by the top-level recache process. |
 
 ## Branch records
 
@@ -109,4 +109,6 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Scope: explicit subtitle/data/attachment stream-copy codec selection on normal Smart output paths, top-level benchmark-lock ownership, focused regressions, version/release metadata, user guidance, and durable decision history.
 - Exclusions: no change to video/audio Smart policy, hardware selection, capacity measurement, mapping's exactly-one-video requirement, degraded proxy codec policy, upstream contribution, stable release, GitHub Release, or distributable ZIP.
 - Live evidence: a one-video/two-audio/DVB-subtitle source mapped with `-map 0` exited with FFmpeg status 8 because MPEG-TS had no automatic subtitle encoder; during a real two-GPU recache, PID 86932 remained active after `.benchmark.lock` disappeared and managed starts followed normal Smart/audio policy instead of degraded `-c copy` fallback.
+- Result: source commit `7e7b78c` merged into `dev` at `6a735d61113646153aef5bf1a1c0a5667b1331e9`; immutable tag `v1.1.0-beta.7` resolves to that reviewed integration commit and is pinned exactly by plugin `v0.2.0-beta.11`.
+- Validation: `scripts/validate.sh`, workspace reconciliation, complete-diff review, and `git diff --check` pass; dev workflow `33024572011` and tag workflow `33024640090` pass. The installed beta.11 service-user recache retained owner lock PID 117623 throughout child probes and concurrent workers, routed a live managed start through basic video/audio stream copy, kept the persistent bypass notification active, and completed with capacities 18 and 15. Map All then started stream 128120 without retry and produced one HEVC video, two copied AAC tracks, and one copied DVB subtitle in MPEG-TS. A maintenance-shell launch as root was non-authoritative because Dispatcharr's unprivileged worker could not signal that cross-UID PID; repeating through the normal `dispatch` service UID passed.
 - Started: `2026-08-26`.
