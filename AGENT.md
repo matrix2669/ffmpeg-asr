@@ -22,7 +22,7 @@ This repository is a hybrid maintained fork of `FiveBoroughs/ffmpeg-asr`. It fol
 - `ffmpeg-smart.sh` resolves stream-copy versus transcode policy, probes hardware, caches capabilities and concurrent capacity, and launches FFmpeg.
 - `benchmark-accel.sh` downloads samples and benchmarks available encoders.
 - `benchmark-live.sh` exercises the production wrapper against local or live media.
-- `.capabilities.cache`, probe media, benchmark samples, benchmark results, and `.benchmark.lock` are runtime state and must not be committed or packaged as source.
+- `.capabilities.cache`, probe media, benchmark samples, benchmark results, and `.benchmark.lock` are runtime state and must not be committed or packaged as source. Consumers installed under replaceable directories set `FFMPEG_SMART_STATE_DIR` to a persistent writable location; standalone use defaults to the script directory.
 - The Dispatcharr plugin pins this repository, path, commit, and checksum in `ffmpeg-smart-profiles/FFMPEG_SMART_SOURCE.json`. Synchronization must remain reviewable through its check/sync workflows.
 
 ## Non-negotiable behavior
@@ -32,6 +32,8 @@ This repository is a hybrid maintained fork of `FiveBoroughs/ffmpeg-asr`. It fol
 - Capacity changes require simultaneous real-time workload validation: short boundary bracketing followed by longer confirmation. Account for 1080p60 and other workloads by weighted pixel rate.
 - Keep automatic scheduling self-contained; do not introduce required shared services or mutable cross-process state without an accepted decision.
 - Do not silently update the Dispatcharr plugin or an existing release. Source synchronization must produce a reviewable change pinned to an immutable commit.
+- Preserve the explicit required-cache failure contract for managed integrations: missing, invalid, or stale required caches identify `ffmpeg-smart` on stderr and exit before media probing.
+- Keep advanced FFmpeg arguments phase-scoped. The wrapper retains ownership of the input, hardware/device selection, video encoder, hardware filter graph, and fixed `-f mpegts pipe:1` destination; user arguments remain arrays and are never shell-evaluated.
 
 ## Branch workflow
 
@@ -43,6 +45,12 @@ This repository is a hybrid maintained fork of `FiveBoroughs/ffmpeg-asr`. It fol
 - Record all current branches in `BRANCHES.md`. Remove deleted-branch entries after their durable results are captured in `CHANGELOG.md` and `DECISIONS.md`.
 
 Before beginning or submitting an upstream contribution, refresh and re-review the upstream tree, instructions, contribution policy, license, CI, relevant issues, and overlapping pull requests. Update `UPSTREAM.md` when anything changes.
+
+## Session completion and remote continuity
+
+GitHub is the authoritative continuation source. Start by fetching `origin` and `upstream` and resume from the exact remote head of the branch that owns the change. A repository-change request authorizes checkpoint commits and pushes to an isolated fork-owned feature/fix branch or `contrib/*` continuation branch as applicable. Before ending or handing off a session, preserve unrelated work, update branch/decision/upstream/validation records, run the applicable gates, commit every in-scope committable change, push every local commit to the matrix2669 fork, and verify through a fresh remote query that the exact GitHub head matches the intended local checkpoint. Incomplete work is pushed as explicit WIP with failures or unavailable validation recorded; never commit credentials, benchmark/runtime state, media, excluded artifacts, or unrelated changes merely to clean the worktree.
+
+If an upstream pull-request head cannot accept incomplete work under current submission rules, checkpoint it on a separate recorded WIP continuation branch and leave the submitted head unchanged. A checkpoint never authorizes merging into `dev` or `main`, pushing to upstream, opening or updating a pull request without its refresh and submission gates, tagging, releasing, changing the downstream plugin pin, deploying, force-pushing, or deleting a branch. Report every state separately.
 
 ## Version and release requirements
 

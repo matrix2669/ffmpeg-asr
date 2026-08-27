@@ -691,3 +691,266 @@ The separate Dispatcharr plugin `v0.1.0` had already been published with a pinne
 - Upstream pull request: `FiveBoroughs/ffmpeg-asr#2`
 - Fork tag: `v1.0.0`
 - Source task: Codex `Update standalone release workflow`
+
+---
+
+# ADR-016: Separate persistent runtime state from replaceable installations
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-22
+
+## Decision
+
+Keep the standalone default of storing `.capabilities.cache`, `probe-sample.mkv`, and `.benchmark.lock` beside `ffmpeg-smart.sh`, but allow consumers to set `FFMPEG_SMART_STATE_DIR` to a persistent writable directory. All three files move together so capability reuse and benchmark coordination share one state boundary.
+
+Provide `FFMPEG_SMART_REQUIRE_CACHE` for managed integrations that coordinate maintenance separately. When enabled for a normal stream invocation, a missing, invalid, or hardware-stale cache must:
+
+- avoid an implicit capability/concurrency benchmark during stream startup;
+- write one clear `[ffmpeg-smart] ERROR [capability-cache-*]` diagnostic to stderr;
+- identify the cache path and recovery action;
+- exit with configuration status `78` before probing media.
+
+Explicit `--recache` and `--recache-only` bypass the required-cache refusal so maintenance can create or replace the cache. Failure to create or write the configured state directory exits with status `73` and an identified state-directory error.
+
+## Reason
+
+Application and plugin managers may replace their installation directory during updates. Runtime cache and lock files stored beside the executable are then deleted, which loses expensive capacity measurements and can make production streams fail while the wrapper attempts disruptive implicit probing. A consumer-owned state path survives code replacement, while an explicit required-cache mode gives operators a deterministic recovery message.
+
+## Alternatives considered
+
+- Store persistent data permanently in `/data` inside the generic wrapper. Rejected because standalone deployments may not have or want that layout; the consumer owns the location.
+- Keep cache files beside the script and copy them during plugin update. Rejected because the old plugin directory may be removed before new code can migrate it.
+- Automatically benchmark whenever a managed integration loses its cache. Rejected because real capacity testing is disruptive and must remain operator-coordinated.
+- Manufacture an invalid FFmpeg command so the error looks like an FFmpeg parser failure. Rejected because a direct wrapper-identified stderr diagnostic and non-zero configuration exit are clearer and do not misrepresent the cause.
+
+## Consequences
+
+Consumers must configure the same state directory for normal streams, recache maintenance, status reads, and benchmark locking. State-path and required-cache changes require missing/invalid/stale cache tests plus downstream integration validation. Existing standalone users retain the historical beside-script behavior.
+
+## Provenance
+
+- User-reported Dispatcharr plugin update deleting runtime files
+- Related plugin fix branch: `fix/persistent-state-errors`
+
+---
+
+# ADR-017: Pass advanced FFmpeg output arguments without shell evaluation
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-25
+
+## Decision
+
+Support repeatable `-ffmpeg-option <argument>` wrapper arguments. Each occurrence appends exactly one argument to an array and passes that array to the final FFmpeg process after the wrapper-managed video, audio, timing, and MPEG-TS settings but before the fixed `-f mpegts pipe:1` output contract.
+
+Do not parse a shell command string, use `eval`, or invoke an intermediate shell. A consumer that starts from a free-form options field must split the field with a shell-compatible argument parser and emit one safely quoted `-ffmpeg-option` pair for every resulting token.
+
+The later placement means an advanced option may intentionally override an earlier managed FFmpeg setting. It cannot replace the wrapper's fixed MPEG-TS container or standard-output destination. The wrapper preserves argument boundaries but does not attempt to validate encoder- or filter-specific compatibility.
+
+## Reason
+
+Profiles occasionally need FFmpeg features that are outside the normalizer's maintained policy surface. Treating every advanced encoder or muxer switch as a new wrapper policy flag would keep expanding the core interface, while evaluating an arbitrary string would create quoting ambiguity and command-injection risk.
+
+## Alternatives considered
+
+- Accept one raw shell fragment. Rejected because correct quote handling would require shell evaluation or an incomplete parser.
+- Add a dedicated wrapper flag for every FFmpeg option. Rejected because hardware encoders and deployment-specific FFmpeg builds expose a large, evolving option surface.
+- Allow additional output URLs or replace `-f mpegts pipe:1`. Rejected because live integrations rely on the wrapper's single MPEG-TS standard-output contract.
+
+## Consequences
+
+Manual callers repeat `-ffmpeg-option` for each FFmpeg argument. Integrations may present one friendlier text field, but must preserve the parsed token boundaries when generating the wrapper command. Validation must cover values containing spaces and shell metacharacters, repeat ordering, missing values, and the device-pre-scan boundary.
+
+## Provenance
+
+- Operator requirement review: 2026-08-25
+- Related plugin branch: `feature/additional-ffmpeg-options`
+
+---
+
+# ADR-018: Keep advanced overrides inside phase-scoped FFmpeg Smart ownership
+
+## Status
+
+Accepted; supersedes ADR-017 and creates an explicit expert-mode exception to ADR-004
+
+## Date
+
+2026-08-25
+
+## Decision
+
+Retain FFmpeg Smart as the owner of hardware discovery, device initialization, the selected video encoder, hardware-dependent filters, the input source, and the fixed `-f mpegts pipe:1` output. Do not add a native/custom-command mode.
+
+Divide configurable FFmpeg behavior into five ordered groups:
+
+1. Input defaults follow dynamic user-agent, reconnect, and hardware-input arguments but precede `-i`. The inherited group is `-fflags +genpts+igndts+discardcorrupt -err_detect ignore_err`.
+2. Mapping follows `-i`. The inherited group is `-map 0:v:0 -map 0:a:0?`; `all` produces `-map 0`, and custom add/replace mappings use repeatable typed stream specifiers. Runtime validation requires exactly one selected video stream because probing, filter construction, GPU scheduling, and workload accounting describe one normalized video output per wrapper job. Ambiguous positive mappings and negative video mappings are rejected; negative non-video mappings remain available.
+3. Video tuning follows the Smart-owned encoder, hardware filters, profile, HDR, and color settings and applies only when video is transcoded. Its managed group contains bitrate, rate-control buffer, GOP/B-frame, accelerator tuning, output frame-rate, and codec-tag arguments. When `-maxbr` is active, its capped target, maximum rate, and buffer are appended after expert tuning and remain a hard policy ceiling.
+4. Audio follows video on both video-copy and video-transcode paths. Its inherited group is the wrapper's resolved AAC copy or normalization decision. Replacing the audio group may select another codec and is the only explicit exception to ADR-004's automatic AAC-normalization policy, but an active `-maxchan` downmix is appended afterward and remains a hard policy maximum.
+5. MPEG-TS/output options follow audio on both paths. The inherited group is `-avoid_negative_ts make_zero -start_at_zero -mpegts_copyts 0 -mpegts_flags +pat_pmt_at_frames+resend_headers -flush_packets 1 -max_muxing_queue_size 4096`.
+
+Input, video, audio, and mux groups support `inherit`, `add`, and `replace`. `inherit` uses the current versioned defaults; providing arguments without an explicit mode behaves as `add`; `add` appends arguments after the inherited group; and `replace` omits that managed group, including when the replacement is intentionally empty. Mapping supports `inherit`, `add`, `replace`, and `all`; replacement mapping must select exactly one video through a typed positive specifier and may select additional non-video streams.
+
+Use repeatable wrapper arguments so every advanced value remains one Bash-array element. Keep `-ffmpeg-option` as a backward-compatible mux/output alias. Reject wrapper-owned structural tokens with configuration exit status 64. The validation boundary covers explicit option tokens; encoder/build compatibility and the semantic correctness of other advanced combinations remain the operator's responsibility.
+
+## Reason
+
+FFmpeg options are file- and phase-sensitive. The single tail field could not place input flags before `-i`, could not replace additive mapping, skipped the video-copy path, and could let a video-codec override defeat the hardware-aware purpose of the wrapper. Phase-scoped groups provide predictable customization while preserving Smart's hardware benefits and normalizer contract.
+
+## Alternatives considered
+
+- Provide a full native FFmpeg command mode. Rejected because it bypasses FFmpeg Smart's hardware selection, scheduling, and adaptive copy/transcode behavior and does not belong in this integration.
+- Make the complete dynamic FFmpeg command one editable default string. Rejected because hardware, filters, rate control, input metadata, and copy/transcode choice are resolved at runtime and cannot be represented accurately by one static template.
+- Keep a single final-output field. Superseded because option placement and additive mapping cannot be modeled reliably at one command position.
+- Allow `-c:v`, hardware-device, filter-graph, `-i`, `-f`, or output-destination overrides. Rejected because those switches transfer ownership away from Smart or violate the Dispatcharr MPEG-TS pipe contract.
+
+## Consequences
+
+Copy and transcode paths must share resolved input, mapping, audio, and mux arrays. Video tuning must remain transcode-only. Tests must cover every mode, exact token boundaries, copy/transcode placement, legacy alias behavior, all/custom mapping, empty replacements, reserved-token failures, and values containing shell metacharacters without executing them.
+
+Downstream integrations may present friendlier text fields, but must parse them without evaluation, preserve token boundaries, label each scope accurately, and keep the structural ownership boundary aligned with the canonical wrapper.
+
+## Provenance
+
+- Operator requirement review: 2026-08-25
+- Public-plugin advanced-options design review: 2026-08-25
+- Related plugin branch: `feature/scoped-ffmpeg-options`
+
+---
+
+# ADR-019: Expose authoritative read-only cache validity
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-26
+
+## Decision
+
+Provide `--cache-status` as a read-only integration interface that calls the same `load_cache` contract used by normal wrapper startup. It must compare the stored hardware fingerprint with the current script version, benchmark policy, visible hardware identity and render-node mapping, and explicit device selection.
+
+Print exactly one machine-stable `FFMPEG_SMART_CACHE_STATUS` value: `valid`, `missing`, `invalid`, `stale`, or `unavailable`. Exit successfully only for `valid`; every non-valid result exits with configuration status `78`. The status operation must not probe media, run a hardware benchmark, create a capability cache, or replace an existing cache. It cannot be combined with `--recache` or `--recache-only`.
+
+## Reason
+
+A downstream status screen treated any parseable cache file as healthy even when normal startup rejected that same file after a hardware change. Cache schema and hardware fingerprinting belong to the canonical wrapper, so consumers must ask the wrapper rather than duplicate or approximate its validity rules.
+
+## Alternatives considered
+
+- Let each integration parse `HW_FINGERPRINT`. Rejected because it duplicates wrapper-owned hardware and policy logic and can drift from startup behavior.
+- Treat file existence as cache validity. Rejected by the reported stale-cache false positive.
+- Rebuild automatically while checking status. Rejected because capacity benchmarking is disruptive and remains an explicit maintenance action.
+
+## Consequences
+
+Managed consumers can distinguish a usable cache from stale cached capability details without starting a stream. Status vocabulary and exit behavior are an integration contract and require valid, missing, invalid, stale, conflicting-mode, and downstream-consumer tests when changed.
+
+## Provenance
+
+- Operator report: hardware-change startup failure was absent from plugin status because the cache file still existed, 2026-08-26
+- Related plugin branch: `fix/launcher-permissions-cache-status`
+
+---
+
+# ADR-020: Offer an integration-opt-in degraded stream-copy proxy
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-26
+
+## Decision
+
+Add an opt-in `FFMPEG_SMART_CACHE_FALLBACK=proxy` mode for managed integrations. Existing standalone behavior remains unchanged when the variable is unset. For a normal stream invocation, proxy fallback applies when either:
+
+- a live hardware benchmark lock prevents Smart processing; or
+- `FFMPEG_SMART_REQUIRE_CACHE=true` and the capability cache is missing, invalid, stale, or unavailable.
+
+The degraded path runs FFmpeg directly with the resolved user-agent, reconnect, input, mapping, and MPEG-TS/mux groups, followed by `-c copy -f mpegts pipe:1`. It does not probe media, select hardware, apply Smart video/audio policy, run filters, or substitute CPU transcoding. A source that cannot be stream-copied into MPEG-TS may still fail with FFmpeg's native error.
+
+Allow an integration to set `FFMPEG_SMART_FALLBACK_MARKER` to a writable file. Every degraded invocation replaces that marker with a unique invocation token before FFmpeg starts. Marker-write failure is logged but does not turn a usable proxy fallback into a stream failure.
+
+`--cache-status`, `--recache`, and `--recache-only` retain their existing behavior. Explicit maintenance remains operator-controlled.
+
+## Reason
+
+A managed cache can become unusable after installation, plugin update, wrapper-policy change, or hardware change. Failing early is attributable but makes every managed stream look broken until an operator can run the disruptive capability scan. A pure stream-copy proxy preserves basic service without claiming that Smart normalization or hardware acceleration remains active.
+
+The concurrency benchmark measures hardware decode/filter/encode capacity. Stream copy does not use those paths and is consistent with allowing ordinary proxy streams to continue during a scan. It still consumes some shared CPU, memory, and network I/O, so unusually heavy proxy load can affect the host even though it does not consume the GPU encoder capacity being measured.
+
+## Alternatives considered
+
+- Enable fallback unconditionally for all standalone users. Rejected because existing cache and implicit-probe behavior must not change without an explicit integration choice.
+- Use CPU transcoding while the cache is unavailable. Rejected because it can overload the host and would silently approximate rather than preserve the selected Smart policy.
+- Continue returning only exit 75 or 78. Superseded for integrations that explicitly enable degraded service because Dispatcharr presents those exits as ordinary source failures and retries alternatives.
+- Wait for the benchmark or synthesize placeholder media. Rejected because both obscure the actual source stream and create fragile client-lifecycle behavior.
+
+## Consequences
+
+Integrations enabling proxy fallback must tell operators that Smart constraints and hardware acceleration are bypassed, provide a clear route to rebuild capabilities, and treat the marker as a notification signal rather than capability state. Tests must cover missing, invalid, stale, benchmark-locked, marker, option-placement, pipe-input, default-disabled, and native FFmpeg failure behavior.
+
+## Provenance
+
+- Operator-approved degraded proxy design and benchmark-impact review, 2026-08-26
+- Related plugin branch: `feature/degraded-proxy-fallback`
+
+---
+
+# ADR-021: Preserve auxiliary mappings and top-level benchmark-lock ownership
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-26
+
+## Decision
+
+When a normal Smart video-copy or video-transcode path maps subtitle, data, or attachment streams, explicitly select stream copy for those types with `-c:s copy`, `-c:d copy`, and `-c:t copy`. Keep video and audio under their existing independent Smart policies. MPEG-TS compatibility remains native FFmpeg behavior: selecting an auxiliary stream does not promise that every source codec or attachment can be muxed into MPEG-TS.
+
+Make `.benchmark.lock` an owned top-level recache resource. Record the top-level Bash process ID and remove the lock on exit only when cleanup is running outside a Bash subshell and the file's recorded PID still matches that owner. Command substitutions, benchmark workers, and other subshells may inherit the exit trap but must not remove the parent's lock. Existing stale-lock recovery remains unchanged.
+
+## Reason
+
+Live Map All testing against a one-video MPEG-TS source with two AAC audio streams and a DVB subtitle selected every stream but failed before output because FFmpeg had no automatic MPEG-TS subtitle encoder. The wrapper already owns codec policy and must state copy behavior for auxiliary mappings just as it states video and audio behavior.
+
+A live two-GPU recache also showed the benchmark parent still running after the lock disappeared. Bash subshells inherit enough trap state that a shared unconditional `EXIT` cleanup can remove a parent-owned lock. Once missing, a managed invocation follows normal Smart policy instead of the integration's required degraded fallback, allowing hardware work to overlap the benchmark.
+
+## Alternatives considered
+
+- Remove Map All or reject every subtitle/data/attachment mapping. Rejected because MPEG-TS-compatible auxiliary streams can be preserved safely with explicit copy and advanced mappings are an intentional feature.
+- Transcode subtitles automatically. Rejected because Smart has no managed subtitle policy and text/bitmap conversions are format- and build-specific.
+- Ignore the early lock removal because stream copy may still occur through normal policy. Rejected because normal policy may transcode audio or video and the lock is the integration's authoritative maintenance boundary.
+- Let any process that inherits the trap remove the lock. Rejected by the live race and because only the top-level recache process owns benchmark lifetime.
+
+## Consequences
+
+Map All and typed custom mappings can preserve DVB subtitles and other MPEG-TS-compatible auxiliary streams without automatic encoder selection. Incompatible auxiliary codecs still fail with an attributable native mux error. Tests must exercise both normal video-copy and video-transcode command construction.
+
+Benchmark tests must prove the lock remains present after a command-substitution child exits and while a later benchmark command is active, then disappears when the top-level recache exits. Downstream managed integrations must repin the exact corrected wrapper before claiming benchmark fallback validation.
+
+## Provenance
+
+- Operator-authorized live custom-string and benchmark-fallback testing, 2026-08-26
+- Live source: one H.264 video, two AAC audio streams, and one DVB subtitle
+- Live recache evidence: top-level PID 86932 active after `.benchmark.lock` disappeared
+- Related plugin branch: `fix/map-all-benchmark-lock`

@@ -53,10 +53,63 @@ The normalized MPEG-TS stream is written to stdout.
 | `-sdr` | unset | Require SDR output; HDR sources are tone-mapped to BT.709 SDR |
 | `-deint` | unset | Require progressive output for detected interlaced video |
 | `-deinterlace` | unset | Alias for `-deint` |
+| `-ffmpeg-input-mode` | `inherit` | Input-default mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-input-option` | unset | Add one exact input-side FFmpeg argument before `-i`; repeat for every argument |
+| `-ffmpeg-map-mode` | `inherit` | Stream mapping: `inherit`, `add`, `replace`, or `all` |
+| `-ffmpeg-map` | unset | Add one map specifier, such as `0:a:0?`; repeat for custom mappings |
+| `-ffmpeg-video-mode` | `inherit` | Transcode-video tuning mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-video-option` | unset | Add one exact transcode-video tuning argument; repeat for every argument |
+| `-ffmpeg-audio-mode` | `inherit` | Audio-default mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-audio-option` | unset | Add one exact audio argument; repeat for every argument |
+| `-ffmpeg-mux-mode` | `inherit` | MPEG-TS/output-default mode: `inherit`, `add`, or `replace` |
+| `-ffmpeg-mux-option` | unset | Add one exact MPEG-TS/output argument; repeat for every argument |
+| `-ffmpeg-option` | unset | Backward-compatible alias for additive `-ffmpeg-mux-option` arguments |
 | `--recache` | | Force a fresh capability probe |
 | `--recache-only` | | Rebuild the capability/capacity cache and exit without requiring an input stream |
+| `--cache-status` | | Check the existing cache against the current script, policy, and hardware without rebuilding it |
 
 `-maxres`, `-maxbr`/`-maxbitrate`, `-maxchan`, `-sdr`, and `-deint` are independent optional constraints. Any one can be used by itself, or they can be combined.
+
+## Persistent state
+
+By default, `.capabilities.cache`, `probe-sample.mkv`, and `.benchmark.lock` remain beside `ffmpeg-smart.sh` for standalone compatibility. Integrations installed in replaceable application or plugin directories should provide a persistent writable state directory:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles ./ffmpeg-smart.sh -i "stream_url"
+```
+
+The directory is created when possible. Startup exits with status `73` and an `[ffmpeg-smart] ERROR [state-directory]` message if it cannot be created or written.
+
+Integrations that coordinate benchmarking separately can also require an existing valid cache:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles \
+FFMPEG_SMART_REQUIRE_CACHE=true \
+./ffmpeg-smart.sh -i "stream_url"
+```
+
+With this mode enabled, a missing, invalid, or hardware-stale cache does not launch an implicit benchmark during stream startup. The wrapper exits with status `78` and a specific `[ffmpeg-smart] ERROR [capability-cache-*]` message instructing the operator to rebuild the hardware cache. Explicit `--recache` and `--recache-only` remain available and are not blocked by this setting.
+
+Managed integrations that prefer basic service over a startup failure can explicitly enable degraded proxy fallback:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles \
+FFMPEG_SMART_REQUIRE_CACHE=true \
+FFMPEG_SMART_CACHE_FALLBACK=proxy \
+./ffmpeg-smart.sh -i "stream_url"
+```
+
+When the required cache is missing, invalid, stale, or unavailable—or while a hardware benchmark lock is active—the wrapper skips probing, Smart policy, hardware selection, filters, and encoding. It runs a basic FFmpeg `-c copy` MPEG-TS proxy using the resolved input, mapping, and mux groups. Video/audio Smart constraints are not enforced in this mode, and an incompatible source can still fail native FFmpeg remuxing. The default `FFMPEG_SMART_CACHE_FALLBACK=none` preserves historical standalone behavior.
+
+An integration can set `FFMPEG_SMART_FALLBACK_MARKER` to a writable file. Every degraded invocation writes a new token there before starting FFmpeg, allowing the integration to re-display an operational notice if a previous warning was dismissed. The marker is a notification signal only; `--cache-status` remains the cache-validity authority.
+
+Managed integrations can check the same cache contract without starting a stream or benchmark:
+
+```bash
+FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles ./ffmpeg-smart.sh --cache-status
+```
+
+The command prints exactly one machine-stable `FFMPEG_SMART_CACHE_STATUS` value: `valid`, `missing`, `invalid`, `stale`, or `unavailable`. It exits successfully only for `valid`; every non-valid cache exits with status `78`. The check does not create, replace, or benchmark a cache. `--cache-status` cannot be combined with either recache option.
 
 ## Policy model
 
@@ -122,6 +175,48 @@ Each limit is conditional:
 When a transcode is required with `-maxbr 2M`, the normal 720p target is capped to 85% of the ceiling (1.7 Mbps) while `-maxrate` remains 2 Mbps, leaving headroom for constrained-VBR peaks.
 
 If multiple constraints require a transcode, they are handled in the same video/audio pipeline rather than causing multiple generations.
+
+## Advanced FFmpeg Smart options
+
+Advanced arguments are grouped by where FFmpeg requires them. Every argument is preserved as an array element without evaluating a shell command.
+
+Each group supports three modes:
+
+- `inherit` uses FFmpeg Smart's current versioned defaults. Supplying options while leaving the mode on `inherit` behaves as `add` for backward-compatible convenience.
+- `add` places the user arguments after the managed group, allowing later single-value settings to override an earlier default.
+- `replace` omits the managed group and uses only the supplied arguments. An intentionally blank replacement is allowed except for stream mapping, which must still select at least one stream.
+
+The groups have these boundaries:
+
+- **Input** follows the dynamic HTTP user-agent/reconnect and hardware-input setup but precedes `-i`. Its inherited values are `-fflags +genpts+igndts+discardcorrupt -err_detect ignore_err`.
+- **Mapping** follows `-i`. Its inherited value is `-map 0:v:0 -map 0:a:0?`; `all` uses `-map 0`, while `add` and `replace` accept repeated typed `-ffmpeg-map` specifiers. A job must select exactly one video stream because Smart probes, filters, schedules, and accounts for one hardware-normalized video output. Ambiguous positive mappings and negative video mappings are rejected. Mapped subtitle, data, and attachment streams are explicitly stream-copied so FFmpeg does not attempt to select an encoder, but the source codec must still be compatible with MPEG-TS; multiple auxiliary streams remain an expert compatibility choice.
+- **Video tuning** is used only when Smart chooses hardware/software video transcoding. Replace removes managed bitrate, GOP, frame-rate, and encoder tuning, but retains the selected encoder, hardware filter graph, color policy, and any explicit `-maxbr` ceiling.
+- **Audio** follows video processing on both the copy and transcode paths. Replace removes Smart's normal AAC/copy arguments for the mapped audio streams, while an explicit `-maxchan` remains a hard maximum.
+- **MPEG-TS/output** follows audio on both paths. Its inherited group normalizes timestamps, resends PAT/PMT, flushes packets, and sets the mux queue size. The final `-f mpegts pipe:1` remains fixed.
+
+For example, this retains hardware selection while replacing input defaults, mapping all streams, adding GOP/key-frame tuning, replacing audio with AC-3, and replacing the MPEG-TS flags:
+
+```bash
+./ffmpeg-smart.sh \
+  -i "STREAM_URL" \
+  -ffmpeg-input-mode replace \
+  -ffmpeg-input-option -fflags \
+  -ffmpeg-input-option +discardcorrupt+genpts+nobuffer \
+  -ffmpeg-map-mode all \
+  -ffmpeg-video-mode add \
+  -ffmpeg-video-option -g \
+  -ffmpeg-video-option 60 \
+  -ffmpeg-video-option -force_key_frames \
+  -ffmpeg-video-option 'expr:gte(t,n_forced*2)' \
+  -ffmpeg-audio-mode replace \
+  -ffmpeg-audio-option -c:a \
+  -ffmpeg-audio-option ac3 \
+  -ffmpeg-mux-mode replace \
+  -ffmpeg-mux-option -mpegts_flags \
+  -ffmpeg-mux-option +pat_pmt_at_frames+resend_headers+initial_discontinuity
+```
+
+FFmpeg Smart rejects structural switches that would take ownership of its input, stream-mapping syntax, hardware selection, hardware filter graph, selected video encoder, output format, or output destination. Advanced settings remain operator-controlled and may still be unsupported by the selected encoder or installed FFmpeg build.
 
 ## Maximum resolution
 
@@ -340,7 +435,7 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 ./ffmpeg-smart.sh --recache-only
 ```
 
-While a cache-only benchmark is running, the script maintains `.benchmark.lock` beside itself. New normal transcode invocations exit with status 75 instead of competing with the benchmark. The lock is removed automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
+While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal invocations exit with status 75 instead of competing with the benchmark unless an integration explicitly enables degraded proxy fallback, in which case they use stream copy without GPU decode, filtering, or encoding. Only the top-level recache owner may remove its lock; command substitutions and concurrent benchmark-worker subshells cannot clear it while the parent remains active. The owner removes the lock automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
 
 `-i pipe:0` and `-i -` are supported for live pipeline integrations such as Dispatcharr Output Profiles. The wrapper captures up to four seconds of the pipe for probing, then prepends that exact sample to the remaining input before starting FFmpeg so probe data is not lost.
 
