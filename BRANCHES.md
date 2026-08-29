@@ -15,7 +15,8 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 |---|---|---|---|---|---|
 | `main` | long-lived | active | upstream history | stable tags | Stable canonical source for matrix2669 versions and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
-| `feature/clean-room-rewrite` | feature | active, WIP | `dev` at `7829924588336f1de07f18d944472c429a32c5b1` | `dev` | Replace all remaining inherited runtime and benchmark implementation with independently structured code while preserving documented behavior and tests. |
+| `feature/adaptive-input-probing` | feature | active dependency | `dev` at `7829924588336f1de07f18d944472c429a32c5b1` | `dev` | Own the accepted metadata-validated adaptive probing behavior being absorbed by the clean-room rewrite. |
+| `feature/clean-room-rewrite` | feature | active, WIP | `dev` plus `feature/adaptive-input-probing` at `ecc64244dae2c0e80761da6f16be92d95b91d29a` | `dev` | Replace all remaining inherited runtime and benchmark implementation with independently structured code while preserving every accepted behavior and test contract. |
 | `contrib/license-clarification` | upstream contribution | active, pending operator decision | `upstream/main` | `upstream/main` | Propose an explicit upstream MIT license without mixing fork-owned changes. |
 
 ## Branch records
@@ -36,17 +37,27 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Publication state: `origin/dev` and `origin/main` contain the identical stable source; beta and stable tags remain immutable.
 - Last verified at: `2026-08-26`.
 
+### `feature/adaptive-input-probing`
+
+- Purpose: shorten normal live-input startup while retaining complete selected-stream metadata and safe fallback for delayed audio headers.
+- Base and target: `dev` at `7829924588336f1de07f18d944472c429a32c5b1`; target `dev` after validation.
+- Current head: `ecc64244dae2c0e80761da6f16be92d95b91d29a` (`feat: add adaptive input probing`).
+- Scope: accepted adaptive tier selection, selected-stream metadata validation, final-input tier propagation, focused tests, documentation, and ADR-022.
+- Relationship: this branch is an explicit source dependency of `feature/clean-room-rewrite`. The rewrite must preserve ADR-022 and its tests; do not integrate both branches independently into `dev` after the rewrite supersedes the implementation.
+- Publication state: prior beta authorization did not authorize stable promotion, a GitHub Release, or a distributable archive.
+- Last reviewed: `2026-08-29`.
+
 ### `feature/clean-room-rewrite`
 
 - Purpose: independently reimplement the adaptive FFmpeg wrapper and both benchmark tools so the maintained project no longer depends on unlicensed upstream source expression.
-- Base: `dev` at `7829924588336f1de07f18d944472c429a32c5b1`.
+- Base: `dev` at `7829924588336f1de07f18d944472c429a32c5b1`, with the accepted behavior from `feature/adaptive-input-probing` at `ecc64244dae2c0e80761da6f16be92d95b91d29a` merged before implementation.
 - Intended target: `dev` after complete behavioral, shell, cache, scheduling, Docker/LXC, and hardware validation.
 - Scope: replace `ffmpeg-smart.sh`, `benchmark-accel.sh`, and `benchmark-live.sh`; add independently structured implementation modules and regression coverage; update architecture, provenance, user documentation, and decisions.
-- Compatibility contract: preserve the documented command line, state-directory behavior, required-cache failure contract, hardware overrides, conservative workload accounting, phase-scoped advanced arguments, fixed MPEG-TS stdout destination, and Dispatcharr source-pin review boundary.
+- Compatibility contract: preserve the documented command line, adaptive input probing, state-directory behavior, required-cache failure contract, hardware overrides, conservative workload accounting, phase-scoped advanced arguments, fixed MPEG-TS stdout destination, and Dispatcharr source-pin review boundary.
 - Clean-room constraints: preserve observable behavior rather than source structure; use new organization, names, control flow, cache representation, logging, comments, and benchmark orchestration; do not copy implementation from unlicensed or copyleft donor code.
 - Exclusions: no merge into `dev` or `main`, tag, release, plugin pin update, deployment, upstream submission, force-push, or branch deletion without their separate gates and approval.
-- Current state: branch created and recorded; implementation and validation are in progress.
-- Validation plan: run `./scripts/validate.sh`, new unit/regression tests, software fallback tests, controlled hardware-probe tests, benchmark lock tests, required-cache tests, and deployment-hardware capacity validation before integration.
+- Current state: branch and dependency are recorded; implementation and validation are in progress.
+- Validation plan: run `./scripts/validate.sh`, new unit/regression tests, software fallback tests, controlled hardware-probe tests, adaptive probing tests, benchmark lock tests, required-cache tests, and deployment-hardware capacity validation before integration.
 - Last verified: `2026-08-29`.
 
 ### `contrib/license-clarification`
@@ -55,8 +66,8 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Base: `upstream/main` at `99899d05affa501404ef2d2b926136a80bb87c75`.
 - Current head: `c4b14583cec5fc0c839cab10eb517ca9b0c915ce` (`docs: add MIT license`).
 - Scope: one new `LICENSE` file naming FiveBoroughs; the branch has no fork-governance or runtime changes.
-- State: this unmerged remote branch appeared after the requested branch cleanup completed. It is preserved pending the operator's decision because deleting it would erase concurrent work aimed at the active license blocker; no pull request currently exists.
+- State: preserved pending the operator's decision because no upstream response or merged license grant has been recorded.
 
 ## Completed branch cleanup
 
-On `2026-08-26`, all feature, fix, integration, safety, and release branches that existed during cleanup were deleted locally and from `origin` after their results were preserved in `CHANGELOG.md` and `DECISIONS.md` and their tips were verified as merged or tree-equivalent. Tags were retained. The later concurrent `contrib/license-clarification` branch is the only additional remote ref and is explicitly recorded above pending operator direction.
+On `2026-08-26`, completed feature, fix, integration, safety, and release branches were deleted after their durable results were captured. The current branches above remain active and must not be deleted while another recorded branch or composition depends on them.
