@@ -1,0 +1,43 @@
+name: Probe IPTV comparison runner
+
+on:
+  push:
+    branches:
+      - test/iptv-comparison
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Verify target host and devices
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(hostname -s)"
+          echo "HOSTNAME=$host"
+          echo "KERNEL=$(uname -srmo)"
+          if [[ "$host" != "iptv" ]]; then
+            echo "This runner is not the authorized iptv host; refusing hardware work." >&2
+            exit 78
+          fi
+          command -v docker || true
+          command -v ffmpeg || true
+          command -v ffprobe || true
+          printf '%s\n' '--- /dev/dri ---'
+          ls -la /dev/dri || true
+          printf '%s\n' '--- render-node identities ---'
+          for dev in /dev/dri/renderD*; do
+            [[ -e "$dev" ]] || continue
+            node="${dev##*/}"
+            printf '%s vendor=%s device=%s revision=%s\n' \
+              "$dev" \
+              "$(cat "/sys/class/drm/$node/device/vendor" 2>/dev/null || echo unknown)" \
+              "$(cat "/sys/class/drm/$node/device/device" 2>/dev/null || echo unknown)" \
+              "$(cat "/sys/class/drm/$node/device/revision" 2>/dev/null || echo unknown)"
+          done
+          printf '%s\n' '--- dispatcharr container ---'
+          docker inspect -f '{{.Name}} status={{.State.Status}} image={{.Config.Image}}' dispatcharr 2>/dev/null || true
