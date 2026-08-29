@@ -31,6 +31,7 @@ All notable matrix2669 fork changes are documented here.
 
 - Pass the canonical Bash 3 suite locally and inside the production Dispatcharr image, including cache/state, advanced options, Map All, lock identity, adaptive probing, the full video/audio/HDR policy matrix, hardware command construction, representative Main10 benchmarking, and non-seekable stdin replay.
 - Validate both Intel render nodes through QSV and VAAPI, explicit CLI and environment overrides, missing-DRI software fallback, weighted overlap scheduling, 16 benchmark-helper combinations, HTTP redaction, bounded UDP output, decode/metadata comparisons, and repeated startup/long-run performance measurement.
+- Validate real Dispatcharr 1080p59.94, 1080i29.97 MPEG-2/AC-3, and 720p59.94 sources through bounded direct-live and identical captured-sample old/new copy/transcode matrices; all pairs match metadata, decode cleanly, and have zero DTS backsteps, while copy results are byte-identical.
 
 ## [1.1.1-beta.1] - 2026-08-27
 

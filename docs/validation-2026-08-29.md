@@ -99,6 +99,50 @@ Controlled inputs covered H.264/AAC 1080p and 480p, HEVC/AAC 1080p, MPEG-2 inter
 
 All final finite outputs decoded with FFmpeg status 0. Representative finite outputs had zero warning-level decode errors and zero per-stream DTS regressions; the interlaced sample emitted only FFmpeg's benign “Guessed Channel Layout: 5.1” message. Copy/no-op outputs were byte-identical between old and new. The 30-second UDP join artifact decoded with status 0 and monotonic DTS, but its file began mid-stream and FFprobe could not infer initial video geometry; this is retained as a bounded-live limitation rather than promoted to a clean finite-file result.
 
+## Actual Dispatcharr stream comparison
+
+After the controlled matrix, the operator confirmed that no viewers were active and authorized real Dispatcharr stream testing. Dispatcharr and `/proc` both showed zero active non-zombie FFmpeg processes before the run. The credential-free local M3U/proxy interface exposed 527 channels. Candidate discovery used short sequential probes, printed only channel IDs/names and media metadata, and retained every raw address solely in process memory.
+
+Three current direct sources were selected by observed media rather than channel-name assumptions:
+
+| Source | Actual input media |
+|---|---|
+| CBS 2 New York | H.264 High, 1920x1080 progressive, 60000/1001, yuv420p, two AAC stereo 48 kHz tracks |
+| PIX11 New York | MPEG-2 Main, 1920x1080 top-field-first, 30000/1001, yuv420p, AC-3 5.1 plus AC-3 stereo at 48 kHz |
+| FOX 5 New York | H.264 High, 1280x720 progressive, 60000/1001, yuv420p, AAC stereo 48 kHz |
+
+Each source first ran directly through old and new wrappers for bounded 10-second output. H.264 copy and forced HEVC paths were exercised for 1080p and 720p; the 1080i source was forced through both H.264 and HEVC with deinterlacing and 5.1-to-stereo conversion. Every pair selected Arc `renderD129` when transcoding, returned status 0, produced the same output metadata, decoded with status 0, and had zero per-stream DTS backsteps.
+
+Single-run time to first live output was:
+
+| Case | Baseline | Rewrite |
+|---|---:|---:|
+| 1080p H.264 copy | 3.61 s | 2.52 s |
+| 1080p H.264 -> HEVC | 2.84 s | 2.10 s |
+| 1080i -> progressive H.264 stereo | 10.89 s | 3.57 s |
+| 1080i -> progressive HEVC stereo | 11.60 s | 3.21 s |
+| 720p H.264 copy | 3.23 s | 2.72 s |
+| 720p H.264 -> HEVC | 3.31 s | 3.48 s |
+
+These are bounded observations, not latency benchmarks: provider behavior and adjacent live-content windows can vary. The rewrite was earlier in five cases and 0.17 seconds later in the 720p transcode case.
+
+For an exact-input comparison, one raw 12-second MPEG-TS sample was then captured from each same source without retaining its URL:
+
+| Sample | Bytes | Duration |
+|---|---:|---:|
+| 1080p | 9,007,832 | 12.034678 s |
+| 1080i | 11,149,904 | 12.038067 s |
+| 720p | 5,668,012 | 12.097345 s |
+
+The identical samples were replayed through both wrappers for the same six copy/transcode cases. All 12 outputs returned status 0, decoded successfully, and had zero DTS backsteps. Every old/new pair was equal in codec, profile, geometry, frame rate, field order, pixel format, audio format/channel count/rate, and stream count. The 1080i outputs were progressive H.264 High or HEVC Main with AAC stereo. H.264 copy outputs were byte-identical:
+
+- 1080p: `8c4ad77194ae67270247d0172e01817586ca70d3b06f89a7e8f57d9868e27b44`
+- 720p: `5598607bf61594358f8e8e1d3dffce016ed2cc783d347604a16e43c86aaf19cc`
+
+Copy-output warning decoding emitted only FFmpeg's benign `Increasing reorder buffer to 2`; every transcode decoded with zero warning lines. The final rewrite runs used the corrected representative-Main10 cache (Arc capacity 14, iGPU 11), not the earlier exploratory H.264-built cache. A preliminary explicit-device attempt returned the expected cache-fingerprint status 78 and was discarded before the final matrix.
+
+Sanitized evidence was copied to `/tmp/ffmpeg-asr-cleanroom-validation-20260829.3jz1oK/live-dispatcharr-20260829` on `iptv`. A scan of 286 saved log files found zero unresolved supported-scheme network addresses. The final process audit again found zero active non-zombie FFmpeg processes.
+
 ## Performance
 
 Five warm repetitions inside one container isolated remux startup:
@@ -137,7 +181,7 @@ Deterministic tests proved:
 - final media stdout remains separate from redacted diagnostics;
 - no active FFmpeg process, validation container, or fresh-state benchmark lock remained after the final runs.
 
-No plugin installation, managed profile change, Dispatcharr restart, production stream use, pin update, deployment, tag, release, or branch deletion occurred.
+No plugin installation, managed profile change, Dispatcharr restart, active-viewer session, pin update, deployment, tag, release, or branch deletion occurred. Real provider streams were read only through bounded tests after the operator confirmed that no viewers were active.
 
 ## Defects found and corrected
 
@@ -162,7 +206,7 @@ Each corrected behavior has deterministic regression coverage, hardware/media ev
 - GPU engine utilization was unavailable because neither `intel_gpu_top` nor `vainfo` was installed; no package was added to the production host.
 - Capacity totals are conservative but not strictly comparable across the two benchmark fixture/command implementations.
 - Render-node reassignment was safely simulated through signature-swapped cache records; the host was not rebooted or renumbered.
-- No credentialed production Dispatcharr URL or active viewer stream was touched. Local HTTP and live UDP transports covered network behavior without exposing persistent URLs.
+- Real Dispatcharr provider streams were tested, but credentials and persistent source URLs remained internal to the container process and were not printed or committed. No active viewer stream was touched.
 - A bounded UDP recording can begin mid-GOP before codec headers, although the longer artifact decoded successfully. A real receiver's join/recovery behavior remains a live-environment condition.
 
 ## Commands and evidence groups
@@ -171,7 +215,7 @@ Each corrected behavior has deterministic regression coverage, hardware/media ev
 - Suites: old, prevalidation-new, final local Bash 3, and final Dispatcharr-container `scripts/validate.sh`.
 - Hardware: `ffmpeg -version`, `ffprobe -version`, `-hwaccels`, encoder/decoder listings, `/dev/dri`, DRM sysfs, Dispatcharr device/mount inspection.
 - Cache: clean `--recache-only`, `--cache-status`, required-cache/fallback tests, signature reuse, override states, no-DRI state, lock tests.
-- Media: old/new wrapper matrix, FFprobe metadata table, full decode, warning decode, DTS monotonicity, SHA-256 copy comparisons.
+- Media: controlled old/new wrapper matrix plus real Dispatcharr 1080p/1080i/720p direct-live and exact-sample replay, FFprobe metadata tables, full decode, warning decode, DTS monotonicity, and SHA-256 copy comparisons.
 - Performance: repeated direct/old/new startup, bounded long old/new runs with `docker stats`, overlapping scheduler jobs.
 - Helpers: `benchmark-accel.sh 1 1`, `benchmark-live.sh 5 local`.
 - Provenance: normalized exact-line overlap at 32- and 48-character thresholds, recorded in `PROVENANCE.md`.
