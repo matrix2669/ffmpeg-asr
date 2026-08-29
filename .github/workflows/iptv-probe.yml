@@ -84,6 +84,25 @@ jobs:
           sha256sum baseline/benchmark-accel.sh candidate/benchmark-accel.sh
           sha256sum baseline/benchmark-live.sh candidate/benchmark-live.sh
 
+      - name: Package source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/ffmpeg-asr-source-snapshot.tar.gz candidate baseline
+          cp /tmp/rewrite-audit.md /tmp/
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-asr-source-snapshot
+          path: |
+            /tmp/ffmpeg-asr-source-snapshot.tar.gz
+            /tmp/rewrite-audit.md
+            /tmp/baseline-validation.log
+            /tmp/candidate-validation.log
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Enforce replacement precondition
         shell: bash
         run: |
