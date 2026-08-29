@@ -24,6 +24,12 @@ Key features:
 - AAC passthrough and predictable AAC conversion for non-AAC/downmixed audio
 - MPEG-TS remuxing, timestamp normalization, reconnect handling, and PAT/PMT refresh
 
+## Runtime architecture
+
+`ffmpeg-smart.sh` is a thin compatibility entry point. Independent modules under `lib/` own CLI parsing, persistent cache data, hardware discovery and benchmarking, adaptive probing, and media policy/command construction. The entry point retains the documented external options and fixed MPEG-TS stdout contract without retaining the inherited monolithic implementation structure.
+
+The rewrite's capability cache is schema 2, a validated tab-delimited data format headed by `FFMPEG_SMART_CACHE_V2`. It is parsed as data and is never sourced as shell code. A legacy shell-assignment cache is intentionally reported as `invalid` and must be rebuilt; it is not executed or migrated in place.
+
 ## Usage
 
 ```bash
@@ -72,7 +78,7 @@ The normalized MPEG-TS stream is written to stdout.
 
 ## Persistent state
 
-By default, `.capabilities.cache`, `probe-sample.mkv`, and `.benchmark.lock` remain beside `ffmpeg-smart.sh` for standalone compatibility. Integrations installed in replaceable application or plugin directories should provide a persistent writable state directory:
+By default, `.capabilities.cache`, generated benchmark samples, captured probe samples, and `.benchmark.lock` remain beside `ffmpeg-smart.sh` for standalone compatibility. Integrations installed in replaceable application or plugin directories should provide a persistent writable state directory:
 
 ```bash
 FFMPEG_SMART_STATE_DIR=/data/ffmpeg_smart_profiles ./ffmpeg-smart.sh -i "stream_url"
@@ -281,7 +287,7 @@ Audio is never upmixed merely because `-maxchan` is higher than the source chann
 
 SDR sources are unaffected by this constraint. HDR sources are transcoded and tone-mapped to BT.709 SDR.
 
-On QSV, the script uses QSV VPP tone mapping. On VAAPI, it uses `tonemap_vaapi`. Other accelerators use a software tone-map filter path before hardware encoding where possible.
+QSV and VAAPI retain hardware encoding, but HDR-to-SDR conversion uses FFmpeg's software `zscale`/`tonemap` path before uploading BT.709 NV12 frames to the selected encoder. This works for correctly tagged PQ/HLG inputs even when mastering-display side data is absent, a condition that makes the native VAAPI tone-map filter reject otherwise valid HDR media. Software acceleration uses the same color conversion without the upload stage.
 
 HDR-to-SDR output is intentionally 8-bit SDR for broad compatibility.
 
@@ -394,7 +400,7 @@ Any explicit applicable override bypasses automatic multi-GPU selection. The sel
 
 On a capability probe, the script:
 
-1. Downloads a small HEVC Main10 sample when necessary.
+1. Generates bounded H.264 and HEVC Main10 samples locally when necessary.
 2. Tests real decode/encode paths.
 3. Benchmarks available H264/HEVC encoders.
 4. Tests normal and low-power modes where supported.
@@ -402,23 +408,19 @@ On a capability probe, the script:
 6. Finds and confirms real concurrent-stream capacity on every compatible DRM render node.
 7. Stores the fastest working fallback path and primary/secondary device capacities in `.capabilities.cache`.
 
-Example:
+Example schema-2 cache data:
 
-```bash
-BEST_ACCEL='qsv'
-BEST_CODEC='hevc'
-BEST_LOW_POWER='0'
-SUPPORTS_10BIT_DECODE='true'
-SUPPORTS_10BIT_ENCODE='true'
-DECODE_10BIT='qsv=1;vaapi=1;'
-ENCODE_10BIT='qsv=1;vaapi=1;'
-PRIMARY_DEVICE='/dev/dri/renderD129'
-PRIMARY_SPEED='8.62'
-PRIMARY_CAPACITY='8'
-SECONDARY_DEVICE='/dev/dri/renderD128'
-SECONDARY_SPEED='6.35'
-SECONDARY_CAPACITY='6'
+```text
+FFMPEG_SMART_CACHE_V2
+value  schema  2
+value  best_accel  vaapi
+value  best_codec  h264
+value  primary_device  /dev/dri/renderD129
+value  secondary_device  /dev/dri/renderD128
+device <hardware-signature> /dev/dri/renderD129 vaapi h264 0 true true 14 11.5
 ```
+
+The real file uses tabs between fields and also carries its complete fingerprint and the remaining scalar values.
 
 The cache describes the preferred transcode path; it does not mean every input is transcoded.
 
@@ -436,7 +438,7 @@ For automation or plugin-triggered maintenance, use `--recache-only`. It perform
 ./ffmpeg-smart.sh --recache-only
 ```
 
-While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal invocations exit with status 75 instead of competing with the benchmark unless an integration explicitly enables degraded proxy fallback, in which case they use stream copy without GPU decode, filtering, or encoding. Only the top-level recache owner may remove its lock; command substitutions and concurrent benchmark-worker subshells cannot clear it while the parent remains active. The owner removes the lock automatically on exit, and stale locks are discarded when their recorded process no longer exists (or an incomplete startup lock is older than one minute).
+While a cache-only benchmark is running, the script maintains `.benchmark.lock` in the configured state directory. New normal invocations exit with status 75 instead of competing with the benchmark unless an integration explicitly enables degraded proxy fallback, in which case they use stream copy without GPU decode, filtering, or encoding. Only the top-level recache owner may remove its lock; command substitutions and concurrent benchmark-worker subshells cannot clear it while the parent remains active. On Linux the lock records both PID and process start time, so a later container reusing PID 1 cannot inherit a stale lock. The owner removes the lock automatically on every exit path, and stale locks are discarded when their recorded process identity no longer exists (or an incomplete startup lock is older than one minute).
 
 `-i pipe:0` and `-i -` are supported for live pipeline integrations such as Dispatcharr Output Profiles. The wrapper captures up to four seconds of the pipe for probing, then prepends that exact sample to the remaining input before starting FFmpeg so probe data is not lost.
 
@@ -444,7 +446,7 @@ While a cache-only benchmark is running, the script maintains `.benchmark.lock` 
 
 Normal URL and captured-pipe inputs first use `-analyzeduration 1000000 -probesize 1000000`. A successful FFprobe exit is not enough: Smart requires a usable selected video codec, dimensions, and pixel format, plus codec, channel count, and sample rate for every selected audio stream. Incomplete selected-stream metadata retries at 2 seconds/2 MB and then with native FFmpeg defaults.
 
-The final FFmpeg process receives the same bounded probe tier that produced complete metadata. Native defaults remain unbounded by Smart when the default tier is needed. A nonzero FFprobe result is treated as an input or transport failure and exits immediately rather than using a larger analysis window as a network retry. Logs identify escalation and the selected tier without printing the source URL or credentials.
+The final FFmpeg process receives the same bounded probe tier that produced complete metadata. Native defaults remain unbounded by Smart when the default tier is needed. A nonzero FFprobe result is treated as an input or transport failure and exits immediately rather than using a larger analysis window as a network retry. HTTP reconnect flags are limited to HTTP(S), not applied to UDP/SRT/RTSP inputs. Logs identify escalation and the selected tier without printing the source URL or credentials; final FFmpeg diagnostics replace complete supported network addresses with a scheme-preserving marker while media stdout and the FFmpeg exit status remain separate.
 
 ## Benchmarking
 

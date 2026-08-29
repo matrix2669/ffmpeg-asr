@@ -1003,3 +1003,69 @@ Tests must cover complete fast metadata, successful 2-second fallback, native-de
 - Operator-approved controlled HDHomeRun and cross-provider matrices, 2026-08-27
 - Operator decision Q&A: apply to URL and captured-pipe inputs; preserve direct exec; log tiers without URLs; tag and deploy beta for testing, 2026-08-27
 - Downstream owner: `matrix2669/Dispatcharr-FFmpeg-Smart-Plugin`
+
+---
+
+# ADR-023: Replace inherited runtime expression with a data-safe modular compatibility implementation
+
+## Status
+
+Accepted
+
+## Date
+
+2026-08-29
+
+## Decision
+
+Replace the inherited monolithic wrapper and both inherited benchmark implementations with independently organized code based on the workspace clean-rewrite specification, accepted observable behavior, public FFmpeg/Linux/Intel interfaces, and black-box old-versus-new validation.
+
+Keep `ffmpeg-smart.sh` as the public compatibility entry point. Separate common/runtime primitives, CLI validation, capability-cache data, hardware inventory/benchmarking, adaptive media probing, and output policy/command construction under `lib/`. Keep the documented options and status codes, Bash 3 compatibility, hardware overrides, adaptive-probe tiers, conditional copy/transcode policy, weighted two-GPU scheduling, managed fallback, and fixed MPEG-TS stdout destination.
+
+Use cache schema 2 as validated tab-delimited data headed by `FFMPEG_SMART_CACHE_V2`. Never source the cache as shell code. Treat the legacy shell-assignment representation as invalid and require a rebuild. Reuse per-device results by hardware signature across safe node reassignment, but make explicit recache discard reusable measurements. Fingerprint FFmpeg identity, policy/schema/version, exposed node-to-signature mapping, and device overrides.
+
+Generate bounded local H.264 and HEVC Main10 benchmark fixtures. Use representative HEVC Main10 input whenever it is available for candidate and concurrent-capacity work. Find the capacity boundary through bounded expansion/bisection, then confirm the highest stable level and the next level for 30 seconds at the configured speed floor.
+
+For Linux benchmark locks, record PID plus `/proc` process start time. Share one exit cleanup across lock ownership and pipe-sample cleanup so implicit recache cannot leave a lock behind, and do not let a later container's reused PID validate an earlier lock. This supersedes ADR-021's PID-only identity while preserving its top-level/subshell ownership rule.
+
+Keep direct `exec` for ordinary seekable local inputs after releasing any implicit-recache lock. For URL and captured-pipe inputs, supervise FFmpeg through a status-preserving diagnostic pipeline so complete supported network addresses can be redacted without mixing stderr into media stdout and so captured bytes can be replayed exactly. HTTP reconnect flags apply only to HTTP(S). This narrowly supersedes ADR-022's unconditional direct-`exec` lifecycle clause; its adaptive tiers, transport-failure semantics, final-input tier propagation, and no post-launch media retry remain accepted.
+
+For HDR-to-SDR, use software `zscale`/`tonemap` conversion and explicit BT.709 output metadata before re-uploading NV12 to QSV/VAAPI encoders. Do not depend on mastering-display side data being present. Preserve 10-bit only for eligible HEVC input/output; never select a P010 H.264 output path.
+
+Preserve the baseline unconstrained video-rate formula: 8 Mbps at 1920x1080 scaled by output pixel count, with a 2 Mbps floor. Explicit `-maxbr` continues to cap target rate at the lower of this normal rate or 85% of the ceiling.
+
+## Reason
+
+The upstream repository still has no identified redistributable license, and prior review established that attribution, upstream activity, or possible AI authorship does not grant redistribution rights. The feature branch was intended to remove inherited expression but its remote head contained only documentation and the adaptive-probing merge. A real replacement was therefore required before any future relicensing or distributable release could be considered.
+
+Validation also exposed security and correctness reasons for the independent structures: a sourced cache is executable input; MPEG-TS FFprobe output can duplicate program/top-level stream records; native VAAPI tone mapping can require absent mastering metadata; protocol-agnostic reconnect flags break UDP; PID-only locks are unsafe across container PID reuse; and probing finite stdin without exact replay loses the transport opening.
+
+The current task explicitly required credential-free logs, cache/node reassignment behavior, representative Main10 capacity, managed-integration status contracts, correct pipe replay, old-versus-new output proof, and correction of every rewrite regression. Those requirements are authoritative for the supersessions above.
+
+## Alternatives considered
+
+- Continue modifying the inherited monolith. Rejected because it retains unlicensed expression and cannot satisfy the clean-rewrite boundary.
+- Make superficial renames or mechanical restructuring. Rejected because organization, control flow, cache representation, logging, and benchmark orchestration are expressive and must be independently authored.
+- Keep sourcing a newly formatted shell cache. Rejected because runtime state must be data, not executable code.
+- Use only native QSV/VAAPI HDR tone mapping. Rejected because verified PQ input without mastering side data failed on the actual FFmpeg/Arc path.
+- Apply reconnect options to all network protocols. Rejected by a real UDP failure (`Option reconnect not found`).
+- Preserve unconditional `exec` and rely on quiet FFmpeg logs. Rejected because error diagnostics can still print complete source URLs and finite-pipe replay requires wrapper supervision.
+- Accept a PID-only lock in containers. Rejected because independent containers commonly reuse PID 1.
+- Retain the initial rewrite's 5 Mbps 1080p target. Rejected because it changed an observable baseline default and invalidated performance comparison.
+
+## Consequences
+
+The old cache requires one explicit rebuild after adopting the rewrite. The modular runtime and tests become the source of implementation behavior; the historical baseline remains comparison evidence only. URL/pipe invocations keep a thin Bash supervisor until FFmpeg exits, but child status and MPEG-TS stdout remain authoritative and signals were validated through bounded live runs.
+
+Relicensing, merging, tagging, releasing, and downstream plugin synchronization remain separate gates. `PROVENANCE.md` must identify consulted sources and overlap results. Before any MIT declaration or distributable release, recheck the complete tree, licensing notices, final integration diff, and legal/release authority rather than treating this ADR as legal advice.
+
+Hardware validation must retain the exact host, FFmpeg build, fixtures, cache results, output metadata/decode checks, performance limitations, and unavailable GPU telemetry recorded in `docs/validation-2026-08-29.md`.
+
+## Provenance
+
+- Workspace ffmpeg-asr clean-rewrite sidecar at workspace commit `4102563425631edef07899ed1cc8fc95423e05f6`
+- User-authorized comprehensive old-versus-new validation and correction task, 2026-08-29
+- Complete “Copyright and Code Overlap Review” conversation, reviewed 2026-08-29
+- Baseline `7829924588336f1de07f18d944472c429a32c5b1` and adaptive behavior `ecc64244dae2c0e80761da6f16be92d95b91d29a`
+- Independent source and overlap record: `PROVENANCE.md`
+- Hardware and behavior evidence: `docs/validation-2026-08-29.md`

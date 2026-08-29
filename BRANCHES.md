@@ -16,7 +16,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `main` | long-lived | active | upstream history | stable tags | Stable canonical source for matrix2669 versions and downstream synchronization. |
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/adaptive-input-probing` | feature | active dependency | `dev` at `7829924588336f1de07f18d944472c429a32c5b1` | `dev` | Own the accepted metadata-validated adaptive probing behavior being absorbed by the clean-room rewrite. |
-| `feature/clean-room-rewrite` | feature | active, WIP | `dev` plus `feature/adaptive-input-probing` at `ecc64244dae2c0e80761da6f16be92d95b91d29a` | `dev` | Replace all remaining inherited runtime and benchmark implementation with independently structured code while preserving every accepted behavior and test contract. |
+| `feature/clean-room-rewrite` | feature | active, validation complete | `dev` plus `feature/adaptive-input-probing` at `ecc64244dae2c0e80761da6f16be92d95b91d29a` | `dev` | Replace all remaining inherited runtime and benchmark implementation with independently structured code while preserving every accepted behavior and test contract. |
 | `contrib/license-clarification` | upstream contribution | active, pending operator decision | `upstream/main` | `upstream/main` | Propose an explicit upstream MIT license without mixing fork-owned changes. |
 
 ## Branch records
@@ -56,8 +56,10 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Compatibility contract: preserve the documented command line, adaptive input probing, state-directory behavior, required-cache failure contract, hardware overrides, conservative workload accounting, phase-scoped advanced arguments, fixed MPEG-TS stdout destination, and Dispatcharr source-pin review boundary.
 - Clean-room constraints: preserve observable behavior rather than source structure; use new organization, names, control flow, cache representation, logging, comments, and benchmark orchestration; do not copy implementation from unlicensed or copyleft donor code.
 - Exclusions: no merge into `dev` or `main`, tag, release, plugin pin update, deployment, upstream submission, force-push, or branch deletion without their separate gates and approval.
-- Current state: branch and dependency are recorded; implementation and validation are in progress.
-- Validation plan: run `./scripts/validate.sh`, new unit/regression tests, software fallback tests, controlled hardware-probe tests, adaptive probing tests, benchmark lock tests, required-cache tests, and deployment-hardware capacity validation before integration.
+- Current state: the independent runtime, benchmark tools, schema-2 cache, regression suite, provenance record, and validation report are complete. The branch is checkpointed for review and remains intentionally unintegrated pending a separate decision-bearing gate.
+- Validation: `./scripts/validate.sh` passes locally under Bash 3 and in the production Dispatcharr image. Controlled dual-GPU QSV/VAAPI probes, explicit-device and environment overrides, hardware-signature cache reuse, weighted overlap scheduling, missing-DRI software fallback, adaptive URL/pipe probing, exact finite-stdin replay, HTTP credential redaction, bounded UDP output, old-versus-new media/decode metadata, and repeated startup/long-run measurements are recorded in `docs/validation-2026-08-29.md`.
+- Provenance: `PROVENANCE.md` records the consulted sources, clean-room boundary, independent design choices, and file-level overlap review. ADR-023 records the durable architecture and narrowly superseded lifecycle/lock clauses.
+- Publication state: only the feature-branch checkpoint is authorized. It has not been merged to `dev` or `main`; no version, tag, GitHub Release, distributable archive, downstream plugin pin, deployment, upstream submission, force-push, or branch deletion is part of this checkpoint.
 - Last verified: `2026-08-29`.
 
 ### `contrib/license-clarification`

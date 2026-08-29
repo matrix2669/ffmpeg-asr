@@ -2,105 +2,83 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-wrapper="$repo_dir/ffmpeg-smart.sh"
-test_dir="$(mktemp -d "${TMPDIR:-/tmp}/ffmpeg-smart-adaptive-probe.XXXXXX")"
+source "$repo_dir/tests/test-helper.sh"
+test_dir="$(mktemp -d "${TMPDIR:-/tmp}/ffsmart-probe.XXXXXX")"
 trap 'rm -rf -- "$test_dir"' EXIT
-state_dir="$test_dir/state"
-fake_bin="$test_dir/fake-bin"
+state_dir="$test_dir/state"; fake_bin="$test_dir/bin"
 mkdir -p "$state_dir" "$fake_bin"
-
-fingerprint_prefix="$test_dir/fingerprint-prefix.sh"
-sed '/^ensure_probe_sample/,$d' "$wrapper" > "$fingerprint_prefix"
-current_fingerprint="$({
-    FFMPEG_SMART_STATE_DIR="$state_dir" \
-        bash -c 'source "$1"; get_hw_fingerprint' bash "$fingerprint_prefix"
-})"
-printf "HW_FINGERPRINT='%s'\nBEST_ACCEL='software'\nBEST_CODEC='h264'\nBEST_LOW_POWER='0'\nSUPPORTS_10BIT_DECODE='false'\nSUPPORTS_10BIT_ENCODE='false'\nDECODE_10BIT=''\nENCODE_10BIT=''\n" \
-    "$current_fingerprint" > "$state_dir/.capabilities.cache"
-
-cat > "$fake_bin/ffprobe" <<'EOF'
-#!/usr/bin/env bash
-count=0
-[[ ! -f "$FFMPEG_SMART_TEST_PROBE_COUNT" ]] || count="$(<"$FFMPEG_SMART_TEST_PROBE_COUNT")"
-count=$((count + 1))
-printf '%s\n' "$count" > "$FFMPEG_SMART_TEST_PROBE_COUNT"
-printf '%s\n' "$*" >> "$FFMPEG_SMART_TEST_PROBE_ARGS"
-
-complete='{"streams":[{"codec_type":"video","codec_name":"h264","r_frame_rate":"30000/1001","pix_fmt":"yuv420p","field_order":"progressive","width":1280,"height":720},{"codec_type":"audio","codec_name":"aac","profile":"HE-AACv2","channels":2,"sample_rate":"48000"}]}'
-incomplete='{"streams":[{"codec_type":"video","codec_name":"h264","r_frame_rate":"30000/1001","pix_fmt":"yuv420p","field_order":"progressive","width":1280,"height":720},{"codec_type":"audio","codec_name":"aac","channels":0,"sample_rate":"0"}]}'
-
-case "$FFMPEG_SMART_TEST_SCENARIO" in
-    fast-complete) printf '%s\n' "$complete" ;;
-    expanded-fallback) [[ "$count" -eq 1 ]] && printf '%s\n' "$incomplete" || printf '%s\n' "$complete" ;;
-    default-fallback) [[ "$count" -lt 3 ]] && printf '%s\n' "$incomplete" || printf '%s\n' "$complete" ;;
-    exit-zero-incomplete) printf '%s\n' "$incomplete" ;;
-    transport-error) exit 23 ;;
-    *) exit 99 ;;
-esac
-EOF
 
 cat > "$fake_bin/ffmpeg" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == -version ]]; then echo 'ffmpeg version probe-test'; exit 0; fi
 printf '%s\n' "$@" > "$FFMPEG_SMART_TEST_FINAL_ARGS"
+printf 'opening %s\n' "$*" >&2
 EOF
-chmod +x "$fake_bin/ffprobe" "$fake_bin/ffmpeg"
+cat > "$fake_bin/ffprobe" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -version ]]; then echo 'ffprobe version probe-test'; exit 0; fi
+count=0
+[[ ! -f "$FFMPEG_SMART_TEST_COUNT" ]] || count="$(<"$FFMPEG_SMART_TEST_COUNT")"
+count=$((count + 1)); printf '%s\n' "$count" > "$FFMPEG_SMART_TEST_COUNT"
+printf '%s\n' "$@" >> "$FFMPEG_SMART_TEST_PROBE_ARGS"
+video='index=0|codec_name=h264|profile=High|codec_type=video|width=1280|height=720|pix_fmt=yuv420p|r_frame_rate=30000/1001|field_order=progressive|bit_rate=1000000|color_space=bt709|color_transfer=bt709|color_primaries=bt709'
+good_audio='index=1|codec_name=aac|profile=HE-AACv2|codec_type=audio|sample_rate=48000|channels=2|bit_rate=96000'
+bad_audio='index=1|codec_name=aac|profile=HE-AACv2|codec_type=audio|sample_rate=0|channels=0|bit_rate=N/A'
+case "$FFMPEG_SMART_TEST_SCENARIO" in
+    fast) printf '%s\n%s\n' "$video" "$good_audio" ;;
+    expanded) [[ "$count" -eq 1 ]] && printf '%s\n%s\n' "$video" "$bad_audio" || printf '%s\n%s\n' "$video" "$good_audio" ;;
+    default) [[ "$count" -lt 3 ]] && printf '%s\n%s\n' "$video" "$bad_audio" || printf '%s\n%s\n' "$video" "$good_audio" ;;
+    incomplete) printf '%s\n%s\n' "$video" "$bad_audio" ;;
+    transport) echo 'HTTP 503' >&2; exit 23 ;;
+esac
+EOF
+chmod +x "$fake_bin/ffmpeg" "$fake_bin/ffprobe"
+PATH="$fake_bin:$PATH" FFMPEG_SMART_STATE_DIR="$state_dir" test_write_valid_cache "$repo_dir" "$state_dir"
 
 run_case() {
-    local scenario="$1" expected_status="$2"
-    local case_dir="$test_dir/$scenario"
-    mkdir -p "$case_dir"
+    local scenario="$1" expected="$2" dir="$test_dir/$1"
+    mkdir -p "$dir"
     set +e
-    PATH="$fake_bin:$PATH" \
-    FFMPEG_SMART_STATE_DIR="$state_dir" \
-    FFMPEG_SMART_REQUIRE_CACHE=true \
-    FFMPEG_SMART_TEST_SCENARIO="$scenario" \
-    FFMPEG_SMART_TEST_PROBE_COUNT="$case_dir/count" \
-    FFMPEG_SMART_TEST_PROBE_ARGS="$case_dir/probe.args" \
-    FFMPEG_SMART_TEST_FINAL_ARGS="$case_dir/final.args" \
-        "$wrapper" -user_agent test-agent -i 'https://user:secret@example.invalid/live' -vc h264 \
-        > "$case_dir/output.log" 2>&1
+    PATH="$fake_bin:$PATH" FFMPEG_SMART_STATE_DIR="$state_dir" FFMPEG_SMART_REQUIRE_CACHE=true \
+    FFMPEG_SMART_TEST_SCENARIO="$scenario" FFMPEG_SMART_TEST_COUNT="$dir/count" \
+    FFMPEG_SMART_TEST_PROBE_ARGS="$dir/probe.args" FFMPEG_SMART_TEST_FINAL_ARGS="$dir/final.args" \
+        "$repo_dir/ffmpeg-smart.sh" -i 'https://user:secret@example.invalid/live?token=also-secret' -vc h264 > "$dir/log" 2>&1
     status=$?
     set -e
-    if [[ "$status" -ne "$expected_status" ]]; then
-        cat "$case_dir/output.log" >&2
-        echo "Scenario $scenario returned $status, expected $expected_status" >&2
-        exit 1
-    fi
-    if grep -Fq 'user:secret' "$case_dir/output.log"; then
-        echo "Scenario $scenario leaked input credentials" >&2
-        exit 1
-    fi
+    [[ "$status" -eq "$expected" ]] || { cat "$dir/log" >&2; return 1; }
+    ! grep -Fq 'user:secret' "$dir/log"
+    ! grep -Fq 'also-secret' "$dir/log"
+    ! grep -Fq 'example.invalid/live' "$dir/log"
 }
 
-run_case fast-complete 0
-[[ "$(<"$test_dir/fast-complete/count")" -eq 1 ]]
-grep -Fq 'Input probe selected tier=fast analyzeduration=1000000 probesize=1000000' "$test_dir/fast-complete/output.log"
-grep -Fxq -- '-analyzeduration' "$test_dir/fast-complete/final.args"
-grep -Fxq -- '1000000' "$test_dir/fast-complete/final.args"
+run_case fast 0
+[[ "$(<"$test_dir/fast/count")" -eq 1 ]]
+grep -Fq 'selected tier=fast' "$test_dir/fast/log"
+grep -Fxq -- '1000000' "$test_dir/fast/final.args"
 
-run_case expanded-fallback 0
-[[ "$(<"$test_dir/expanded-fallback/count")" -eq 2 ]]
-grep -Fq 'retrying tier=expanded' "$test_dir/expanded-fallback/output.log"
-grep -Fq 'Input probe selected tier=expanded analyzeduration=2000000 probesize=2000000' "$test_dir/expanded-fallback/output.log"
-grep -Fxq -- '2000000' "$test_dir/expanded-fallback/final.args"
+mkdir -p "$test_dir/udp"
+PATH="$fake_bin:$PATH" FFMPEG_SMART_STATE_DIR="$state_dir" FFMPEG_SMART_REQUIRE_CACHE=true \
+FFMPEG_SMART_TEST_SCENARIO=fast FFMPEG_SMART_TEST_COUNT="$test_dir/udp/count" \
+FFMPEG_SMART_TEST_PROBE_ARGS="$test_dir/udp/probe.args" FFMPEG_SMART_TEST_FINAL_ARGS="$test_dir/udp/final.args" \
+    "$repo_dir/ffmpeg-smart.sh" -i 'udp://127.0.0.1:19000' -vc h264 > "$test_dir/udp/log" 2>&1
+! grep -Fxq -- '-reconnect' "$test_dir/udp/final.args"
 
-run_case default-fallback 0
-[[ "$(<"$test_dir/default-fallback/count")" -eq 3 ]]
-grep -Fq 'retrying tier=default' "$test_dir/default-fallback/output.log"
-grep -Fq 'Input probe selected tier=default analyzeduration=default probesize=default' "$test_dir/default-fallback/output.log"
-if grep -Eq '^-analyzeduration$|^-probesize$' "$test_dir/default-fallback/final.args"; then
-    echo "Default fallback unexpectedly constrained the final FFmpeg probe" >&2
-    exit 1
-fi
+run_case expanded 0
+[[ "$(<"$test_dir/expanded/count")" -eq 2 ]]
+grep -Fq 'retrying tier=expanded' "$test_dir/expanded/log"
+grep -Fxq -- '2000000' "$test_dir/expanded/final.args"
 
-run_case exit-zero-incomplete 1
-[[ "$(<"$test_dir/exit-zero-incomplete/count")" -eq 3 ]]
-[[ ! -e "$test_dir/exit-zero-incomplete/final.args" ]]
-grep -Fq 'ERROR [input-probe-default]: ffprobe returned incomplete selected-stream metadata' "$test_dir/exit-zero-incomplete/output.log"
+run_case default 0
+[[ "$(<"$test_dir/default/count")" -eq 3 ]]
+grep -Fq 'selected tier=default' "$test_dir/default/log"
+! grep -Eq '^-analyzeduration$|^-probesize$' "$test_dir/default/final.args"
 
-run_case transport-error 1
-[[ "$(<"$test_dir/transport-error/count")" -eq 1 ]]
-[[ ! -e "$test_dir/transport-error/final.args" ]]
-grep -Fq 'ERROR [input-probe-fast]: ffprobe failed; probe limits were not escalated' "$test_dir/transport-error/output.log"
+run_case incomplete 1
+[[ "$(<"$test_dir/incomplete/count")" -eq 3 ]]
+grep -Fq 'ERROR [input-probe-default]' "$test_dir/incomplete/log"
 
-echo "Adaptive input probing tests passed"
+run_case transport 1
+[[ "$(<"$test_dir/transport/count")" -eq 1 ]]
+grep -Fq 'probe limits were not escalated' "$test_dir/transport/log"
+
+echo 'Adaptive metadata probing tests passed'

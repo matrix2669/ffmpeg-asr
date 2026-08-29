@@ -4,6 +4,34 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Replace the inherited wrapper and benchmark implementations with independently organized Bash 3-compatible modules for CLI handling, cache data, hardware measurement, adaptive probing, and output policy.
+- Add schema-2 tab-delimited capability data that is validated rather than sourced, reuses measurements by hardware signature across safe render-node reassignment, and invalidates the legacy executable cache format.
+- Add generated local H.264 and HEVC Main10 fixtures, bounded capacity discovery with 30-second boundary confirmation, exact finite-stdin replay, and focused policy/hardware/pipe regressions.
+- Add an evidence-backed provenance and overlap record plus the complete 2026-08-29 old-versus-new software, Docker/LXC, dual-GPU, live-transport, metadata, and performance report.
+
+### Changed
+
+- Keep QSV/VAAPI hardware encoding for HDR-to-SDR while performing mastering-metadata-independent software tone mapping and explicit BT.709 conversion before hardware upload.
+- Scope reconnect controls to HTTP(S), redact complete supported network addresses from diagnostics without mixing them into MPEG-TS stdout, and retain a thin status-preserving supervisor only where redaction or captured-pipe replay requires it.
+- Identify benchmark-lock owners by PID and Linux process start time, compose lock/sample cleanup, and preserve the baseline 8 Mbps-at-1080p rate formula with its 2 Mbps floor.
+
+### Fixed
+
+- Remove duplicated MPEG-TS program/top-level probe records, prevent P010 H.264 output selection, pass explicit VAAPI filter devices, release implicit-recache locks on every exit path, and preserve the fixed `-f mpegts pipe:1` output contract.
+- Restore cache reuse, node-reassignment behavior, weighted two-GPU scheduling, representative Main10 capacity measurement, and logarithmic capacity-boundary search in the independent implementation.
+
+### Safety
+
+- Use the inherited runtime and benchmark files only as historical comparison evidence; no non-trivial inherited implementation block is retained in the rewritten runtime or benchmarks.
+- Keep merge, relicensing, tagging, release publication, downstream plugin synchronization, deployment, upstream submission, force-push, and branch deletion behind separate review and authorization gates.
+
+### Validation
+
+- Pass the canonical Bash 3 suite locally and inside the production Dispatcharr image, including cache/state, advanced options, Map All, lock identity, adaptive probing, the full video/audio/HDR policy matrix, hardware command construction, representative Main10 benchmarking, and non-seekable stdin replay.
+- Validate both Intel render nodes through QSV and VAAPI, explicit CLI and environment overrides, missing-DRI software fallback, weighted overlap scheduling, 16 benchmark-helper combinations, HTTP redaction, bounded UDP output, decode/metadata comparisons, and repeated startup/long-run performance measurement.
+
 ## [1.1.1-beta.1] - 2026-08-27
 
 ### Added
@@ -132,7 +160,8 @@ All notable matrix2669 fork changes are documented here.
 
 - Tagged as `v1.0.0` without a GitHub Release or attached ZIP while upstream licensing remains unresolved.
 
-[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.7...HEAD
+[Unreleased]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.1-beta.1...HEAD
+[1.1.1-beta.1]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0...v1.1.1-beta.1
 [1.1.0-beta.7]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.6...v1.1.0-beta.7
 [1.1.0-beta.6]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.5...v1.1.0-beta.6
 [1.1.0-beta.5]: https://github.com/matrix2669/ffmpeg-asr/compare/v1.1.0-beta.4...v1.1.0-beta.5
