@@ -4,7 +4,7 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
-for script in ffmpeg-smart.sh benchmark-accel.sh benchmark-live.sh scripts/validate.sh tests/test-state-dir.sh tests/test-additional-ffmpeg-options.sh tests/test-map-all-codecs.sh tests/test-benchmark-lock-owner.sh; do
+for script in ffmpeg-smart.sh benchmark-accel.sh benchmark-live.sh scripts/validate.sh tests/test-state-dir.sh tests/test-additional-ffmpeg-options.sh tests/test-map-all-codecs.sh tests/test-benchmark-lock-owner.sh tests/test-adaptive-probing.sh; do
     bash -n "$script"
 done
 
@@ -12,6 +12,7 @@ tests/test-state-dir.sh
 tests/test-additional-ffmpeg-options.sh
 tests/test-map-all-codecs.sh
 tests/test-benchmark-lock-owner.sh
+tests/test-adaptive-probing.sh
 
 project_version="$(tr -d '[:space:]' < VERSION)"
 if [[ ! "$project_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then

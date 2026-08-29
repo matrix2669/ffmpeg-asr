@@ -142,6 +142,11 @@ if (FFMPEG_INPUT_MODE="invalid"; resolve_static_ffmpeg_args) >/dev/null 2>&1; th
     exit 1
 fi
 
+if (FFMPEG_INPUT_MODE="add"; USER_INPUT_ARGS=(-analyzeduration 5000000); resolve_static_ffmpeg_args) >/dev/null 2>&1; then
+    echo "Expected wrapper-owned adaptive probe limits to fail" >&2
+    exit 1
+fi
+
 if (FFMPEG_MAP_MODE="all"; USER_MAP_SPECS=(); validate_runtime_mapping 2) >/dev/null 2>&1; then
     echo "Expected all-stream mapping with multiple videos to fail" >&2
     exit 1
@@ -167,6 +172,7 @@ if (FFMPEG_MAP_MODE="add"; USER_MAP_SPECS=(-0:v:0); validate_runtime_mapping 1) 
 fi
 
 assert_occurrence_count 3 '"${FFMPEG_INPUT_ARGS[@]}"'
+assert_occurrence_count 2 '"${PROBE_INPUT_ARGS[@]}"'
 assert_occurrence_count 3 '"${FFMPEG_MAP_ARGS[@]}"'
 assert_occurrence_count 2 '"${FFMPEG_AUDIO_ARGS[@]}"'
 assert_occurrence_count 3 '"${FFMPEG_MUX_ARGS[@]}"'

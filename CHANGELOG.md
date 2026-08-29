@@ -4,6 +4,22 @@ All notable matrix2669 fork changes are documented here.
 
 ## [Unreleased]
 
+## [1.1.1-beta.1] - 2026-08-27
+
+### Added
+
+- Add adaptive input probing that starts at 1 second/1 MB, retries incomplete selected-stream metadata at 2 seconds/2 MB, and falls back to native FFmpeg defaults only when metadata remains incomplete.
+- Validate selected video codec, dimensions, and pixel format plus codec, channels, and sample rate for every selected audio stream before launching FFmpeg.
+
+### Safety
+
+- Apply the successful probe tier to the final FFmpeg input, fail transport errors without increasing probe limits, and keep source URLs and credentials out of tier logs.
+- Preserve direct `exec ffmpeg` lifecycle and existing URL, captured-pipe, mapping, profile, and degraded-proxy behavior.
+
+### Validation
+
+- Add deterministic coverage for complete fast metadata, 2-second fallback, default fallback, FFprobe exit-zero incomplete metadata, transport failure, and final-input tier propagation.
+
 ## [1.1.0] - 2026-08-26
 
 ### Added
