@@ -1,4 +1,4 @@
-name: Probe IPTV comparison runner
+name: Audit rewrite and probe IPTV runner
 
 on:
   push:
@@ -9,6 +9,99 @@ permissions:
   contents: read
 
 jobs:
+  static-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out comparison branch
+        uses: actions/checkout@v4
+        with:
+          ref: test/iptv-comparison
+          path: candidate
+          fetch-depth: 0
+
+      - name: Check out stable baseline
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: baseline
+
+      - name: Run baseline validation
+        shell: bash
+        run: |
+          set -o pipefail
+          baseline/scripts/validate.sh 2>&1 | tee /tmp/baseline-validation.log
+
+      - name: Run candidate validation
+        shell: bash
+        run: |
+          set -o pipefail
+          candidate/scripts/validate.sh 2>&1 | tee /tmp/candidate-validation.log
+
+      - name: Measure implementation replacement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+          from difflib import SequenceMatcher
+          from pathlib import Path
+
+          files = ("ffmpeg-smart.sh", "benchmark-accel.sh", "benchmark-live.sh")
+          rows = []
+          for name in files:
+              old = Path("baseline", name).read_text(encoding="utf-8")
+              new = Path("candidate", name).read_text(encoding="utf-8")
+              old_lines = old.splitlines()
+              new_lines = new.splitlines()
+              ratio = SequenceMatcher(None, old_lines, new_lines, autojunk=False).ratio()
+              rows.append((name, len(old_lines), len(new_lines), ratio, old == new))
+
+          report = [
+              "# Old-versus-candidate implementation audit",
+              "",
+              "| File | Baseline lines | Candidate lines | Sequence similarity | Byte-identical |",
+              "|---|---:|---:|---:|---|",
+          ]
+          for name, old_count, new_count, ratio, identical in rows:
+              report.append(
+                  f"| `{name}` | {old_count} | {new_count} | {ratio:.2%} | {'yes' if identical else 'no'} |"
+              )
+          report.extend((
+              "",
+              "A clean-room replacement gate cannot pass while either benchmark script is byte-identical to `dev`, or while the runtime wrapper remains substantially the inherited implementation.",
+          ))
+          text = "\n".join(report) + "\n"
+          print(text)
+          Path("/tmp/rewrite-audit.md").write_text(text, encoding="utf-8")
+          with Path(__import__('os').environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+              summary.write(text)
+          PY
+          printf '%s\n' '--- git diff statistics ---'
+          git -C candidate diff --stat origin/dev...HEAD
+          printf '%s\n' '--- executable hashes ---'
+          sha256sum baseline/ffmpeg-smart.sh candidate/ffmpeg-smart.sh
+          sha256sum baseline/benchmark-accel.sh candidate/benchmark-accel.sh
+          sha256sum baseline/benchmark-live.sh candidate/benchmark-live.sh
+
+      - name: Enforce replacement precondition
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for file in benchmark-accel.sh benchmark-live.sh; do
+            if cmp -s "baseline/$file" "candidate/$file"; then
+              echo "ERROR: $file is still byte-identical to dev; the rewrite is incomplete." >&2
+              status=1
+            fi
+          done
+          changed="$(git -C candidate diff --numstat origin/dev...HEAD -- ffmpeg-smart.sh | awk '{print $1+$2}')"
+          if [[ ! "$changed" =~ ^[0-9]+$ ]] || (( changed < 500 )); then
+            echo "ERROR: ffmpeg-smart.sh has only ${changed:-unknown} changed lines; this is not credible evidence of a complete independent replacement." >&2
+            status=1
+          fi
+          exit "$status"
+
   probe:
     runs-on: self-hosted
     timeout-minutes: 5
