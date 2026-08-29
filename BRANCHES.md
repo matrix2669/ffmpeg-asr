@@ -17,6 +17,7 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 | `dev` | long-lived | active | `main` | `main` | Integrate and validate the next matrix2669 version. |
 | `feature/adaptive-input-probing` | feature | active dependency | `dev` at `7829924588336f1de07f18d944472c429a32c5b1` | `dev` | Own the accepted metadata-validated adaptive probing behavior being absorbed by the clean-room rewrite. |
 | `feature/clean-room-rewrite` | feature | active, WIP | `dev` plus `feature/adaptive-input-probing` at `ecc64244dae2c0e80761da6f16be92d95b91d29a` | `dev` | Replace all remaining inherited runtime and benchmark implementation with independently structured code while preserving every accepted behavior and test contract. |
+| `test/iptv-comparison` | validation | active, WIP | `feature/clean-room-rewrite` at `3c1b1eca23e3857a29a3b54cf6f5d7736ef133da` | `feature/clean-room-rewrite` | Compare the stable implementation and rewrite candidate on the `iptv` deployment with the Intel iGPU and Arc A310 before any integration claim. |
 | `contrib/license-clarification` | upstream contribution | active, pending operator decision | `upstream/main` | `upstream/main` | Propose an explicit upstream MIT license without mixing fork-owned changes. |
 
 ## Branch records
@@ -58,6 +59,17 @@ This ledger records why every current branch exists. GitHub remains authoritativ
 - Exclusions: no merge into `dev` or `main`, tag, release, plugin pin update, deployment, upstream submission, force-push, or branch deletion without their separate gates and approval.
 - Current state: branch and dependency are recorded; implementation and validation are in progress.
 - Validation plan: run `./scripts/validate.sh`, new unit/regression tests, software fallback tests, controlled hardware-probe tests, adaptive probing tests, benchmark lock tests, required-cache tests, and deployment-hardware capacity validation before integration.
+- Last verified: `2026-08-29`.
+
+### `test/iptv-comparison`
+
+- Purpose: execute a reproducible old-versus-new comparison on the `iptv` deployment, which exposes an Intel iGPU and Intel Arc A310.
+- Base: `feature/clean-room-rewrite` at `3c1b1eca23e3857a29a3b54cf6f5d7736ef133da`.
+- Intended target: feed validated fixes and evidence back to `feature/clean-room-rewrite`; this branch is not an integration or release source.
+- Scope: target-host discovery, isolated `/tmp` worktrees and state, generated and optional Dispatcharr-derived samples, per-device QSV/VAAPI tests, cache and scheduling comparisons, output-property checks, performance measurements, failure-path comparisons, and a durable comparison report.
+- Safety boundary: verify the execution host is `iptv` before hardware tests; keep test data and caches under `/tmp`; do not replace the installed plugin, alter Dispatcharr configuration, interrupt production streams, or run destructive recache tests while production hardware transcodes are active.
+- Current finding: the candidate branch is not yet a complete clean-room rewrite. Relative to `dev`, only 200 lines changed in `ffmpeg-smart.sh`, while `benchmark-accel.sh` and `benchmark-live.sh` remain unchanged. Hardware comparison cannot by itself satisfy the rewrite/provenance gate.
+- Current state: runner/access discovery in progress; no hardware certification has been made.
 - Last verified: `2026-08-29`.
 
 ### `contrib/license-clarification`
