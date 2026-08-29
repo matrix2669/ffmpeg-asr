@@ -89,7 +89,6 @@ jobs:
         run: |
           set -euo pipefail
           tar --exclude=.git -czf /tmp/ffmpeg-asr-source-snapshot.tar.gz candidate baseline
-          cp /tmp/rewrite-audit.md /tmp/
 
       - name: Upload source snapshot
         uses: actions/upload-artifact@v4
